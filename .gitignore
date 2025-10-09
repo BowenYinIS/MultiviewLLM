@@ -3,5 +3,10 @@
 /data/
 data
 
+# Environment variables (machine-specific)
+.env
+
+# Sketch notebook
+sketch.ipynb
 
 
