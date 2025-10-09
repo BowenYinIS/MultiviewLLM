@@ -2,6 +2,7 @@
 .idea
 /data/
 data
+logs/
 
 # Environment variables (machine-specific)
 .env
