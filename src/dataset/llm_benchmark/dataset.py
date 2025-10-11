@@ -23,10 +23,7 @@ class LlmDataset:
     def __init__(self, config):
         # get the settings
         self.config = config
-        self.min_train_size = config["min_train_size"]
-        self.train_previous_all = config["train_previous_all"]
-        self.test_size = config["test_size"]
-        self.data_dir = config["data_dir"]
+        self.sample_index_name = config["sample_index_name"]
 
         # load profile and transaction data
         # - transaction includes spending, balance, and delinquency label
@@ -42,6 +39,12 @@ class LlmDataset:
         # ensure profile and transaction have the same act_idn_sky
         self.profile = self.profile.filter(c.act_idn_sky.is_in(self.valid_act_idn_sky))
         self.transaction = self.transaction.filter(c.act_idn_sky.is_in(self.valid_act_idn_sky))
+
+        # load sample index
+        self.sample_index = pl.read_ipc(
+            paths.processed_data_dir / f"sample_index/{self.sample_index_name}.feather",
+            memory_map=False,
+        )
 
     def build_cycle_units(self):
         """
@@ -109,53 +112,16 @@ class LlmDataset:
                 "transaction_text": transaction_text,
             }
 
-        return cycle_units
+        # save as class attribute
+        self.cycle_units = cycle_units
 
-    def _build_windows(self, billing_dates):
-        """
-        Input:
-            billing_dates: list of billing dates for an account, sorted in order.
-            min_train_size: int. Minimum number of billing cycles in a training window.
-            train_previous_all: bool. Whether to use all previous billing cycles for each window.
-            test_size: int. Maximum number of test samples per account.
-        Output:
-            windows: list of (window, label), where label is either "train" or "test".
-        """
-        # build the windows
-        if not self.train_previous_all:
-            # only a fixed number of billing cycles are used
-            windows = [
-                billing_dates[i : i + self.min_train_size]
-                for i in range(0, len(billing_dates) - self.min_train_size + 1)
-            ]
-        else:
-            # all previous billing cycles are used
-            windows = [
-                billing_dates[:i] for i in range(self.min_train_size, len(billing_dates) + 1)
-            ]
-
-        # label each window as train or test
-        # - at least one test sample is created for each account
-        # - the max number of test samples is test_size
-        # - the number of test samples is determined by the number of billing cycles
-        actual_test_size = min(self.test_size, len(windows) - 1)
-        train_end = len(windows) - actual_test_size
-
-        for i, window in enumerate(windows):
-            if i < train_end:
-                windows[i] = (window, "train")
-            else:
-                windows[i] = (window, "test")
-
-        return windows
-
-    def assemble_samples(self, cycle_units):
+    def assemble_samples(self):
         """
         Assemble training and testing samples for LLM benchmarking by combining profile and transaction data
         into rolling windows of billing cycles.
 
-        Args:
-            cycle_units (dict): Mapping from (act_idn_sky, billing_date) to a dict containing:
+        Input:
+            self.cycle_units (dict): Mapping from (act_idn_sky, billing_date) to a dict containing:
                 - is_delinquent (bool): Whether the cycle is delinquent.
                 - balance_cycle (int): The balance for the cycle.
                 - transaction_text (str): The formatted transaction text for the cycle.
@@ -169,73 +135,47 @@ class LlmDataset:
                 - target_delinquency (bool): Delinquency label for the last cycle in the window
         """
 
-        # get dict: {act_idn_sky: [billing_date, ...]}
-        transaction_by_act = (
-            self.transaction
-            # only keep unique (act_idn_sky, billing_date) pairs
-            .select(c.act_idn_sky, c.billing_date)
-            .unique()
-            # partition into {act_idn_sky: [billing_date, ...]}
-            .partition_by("act_idn_sky", maintain_order=True, as_dict=True, include_key=False)
-        )
-
         # initialize the results
         samples = []
 
-        for (act_idn_sky,), billing_dates in transaction_by_act.items():
-            # convert billing_dates to list
-            billing_dates = billing_dates["billing_date"].sort().unique().to_list()
-
-            # ensure at least have train_num billing_dates
-            # - if the number of billing_dates is exactly train_num, then this
-            #   account is used as a train sample
-            if len(billing_dates) < self.min_train_size:
-                continue
+        for row in tqdm(
+            self.sample_index.iter_rows(named=True),
+            total=self.sample_index.height,
+            desc="Assembling samples",
+        ):
+            # get the data for the current sample
+            act_idn_sky = row["act_idn_sky"]
+            billing_dates = row["billing_dates"]
 
             # get the profile data for this account
             profile_act = self.profile.filter(c.act_idn_sky == act_idn_sky).to_dicts()[0]
 
-            # assemble the biling dates into rolling windows
-            # return: [[201701,201702],[201702,201703],...]
-            windows = self._build_windows(billing_dates)
+            # add profile to the sample
+            sample = row | {
+                **profile_act,
+                "transaction_text": "",
+            }
 
-            # using the window_index to construct the samples
-            for window, split in windows:
-                # a window is like [2017-01 ,2017-02,...,2027-06]
+            # add transaction text to the sample
+            for idx, billing_date in enumerate(billing_dates):
+                # get transaction text of the current cycle
+                transaction_text = self.cycle_units[(act_idn_sky, billing_date)]["transaction_text"]
 
-                # initialize the sample with train/testsplit, profile data, billing dates, and empty transaction text
-                # - we'll add transaction text later
-                sample = (
-                    {"split": split}
-                    | profile_act
-                    | {"billing_dates": window, "transaction_text": ""}
-                )
+                # if this is the last cycle
+                # - remove delinquency lable from the transaction text
+                if idx == len(billing_dates) - 1:
+                    transaction_text = re.sub(
+                        r"该账单周期是否违约.*?，(?=具体消费如下)", "", transaction_text
+                    )
 
-                # assemble all cycles in the window into one sample
-                for idx, billing_date in enumerate(window):
-                    # get delinquency label and transaction text of the current cycle
-                    is_delinquent, balance, transaction_text = cycle_units[
-                        (act_idn_sky, billing_date)
-                    ].values()
+                # add transaction text
+                sample["transaction_text"] += transaction_text + "\n\n"
 
-                    # if this is the last cycle
-                    # - remove delinquency lable from the transaction text
-                    # - add the target delinquency label
-                    if idx == len(window) - 1:
-                        # add transaction text
-                        transaction_text = re.sub(
-                            r"该账单周期是否违约.*?，(?=具体消费如下)", "", transaction_text
-                        )
-                        sample["target_delinquency"] = is_delinquent
-
-                    # add transaction text
-                    sample["transaction_text"] += transaction_text + "\n\n"
-
-                # add the sample to the results
-                samples.append(sample)
+            # add the sample to the results
+            samples.append(sample)
 
         # convert the results to a dataframe
-        return pl.DataFrame(samples)
+        self.samples = pl.DataFrame(samples)
 
     def build(self):
         """
@@ -244,36 +184,42 @@ class LlmDataset:
         Returns:
             pl.DataFrame: The assembled dataset with train/test splits ready for LLM benchmarking.
         """
-        print("Building cycle units...")
-        cycle_units = self.build_cycle_units()
+        # build cycle units
+        self.build_cycle_units()
 
-        print("Assembling samples...")
-        samples = self.assemble_samples(cycle_units)
+        # assemble samples
+        self.assemble_samples()
 
-        print(f"Dataset built: {len(samples)} samples")
+        print(f"Dataset built: {len(self.samples)} samples")
         print(
-            f"\tTrain: {(samples['split'] == 'train').sum()}, Test: {(samples['split'] == 'test').sum()}"
+            f"\tTrain: {(self.samples['split'] == 'train').sum()}, Test: {(self.samples['split'] == 'test').sum()}"
         )
 
         # save the dataset
         save_path = (
-            self.data_dir
-            + f"/samples_min{self.config['min_train_size']}mo_{'allprevious' if self.config['train_previous_all'] else 'fixed'}_{self.config['test_size']}test.feather"
+            paths.processed_data_dir
+            / f"llm_benchmark_samples/{self.sample_index_name.replace('index', 'samples')}.feather"
         )
-        samples.write_ipc(save_path, compression="lz4")
-        print(f"Dataset saved to {save_path}")
-
-        return samples
+        self.samples.write_ipc(save_path, compression="lz4")
+        print(f"Dataset saved to {save_path.name}")
 
 
 if __name__ == "__main__":
-    config = {
-        "min_train_size": 6,
-        "train_previous_all": False,
-        "test_size": 2,
-        "data_dir": str(paths.processed_data_dir/'sample_index'),
-    }
+    configs = [
+        {"sample_index_name": "index_min6mo_allprevious_2test"},
+        {"sample_index_name": "index_min6mo_fixed_2test"},
+        {"sample_index_name": "index_min12mo_allprevious_2test"},
+        {"sample_index_name": "index_min12mo_fixed_2test"},
+        {"sample_index_name": "index_min12mo_allprevious_1test"},
+        {"sample_index_name": "index_min12mo_fixed_1test"},
+    ]
 
     # build and save the dataset
-    dataset = LlmDataset(config)
-    samples = dataset.build()
+    for i, config in enumerate(configs, 1):
+        print(f"\n{'=' * 80}")
+        print(f"Building dataset {i}/{len(configs)}")
+        print(f"Config: {config}")
+        print(f"{'=' * 80}\n")
+
+        dataset = LlmDataset(config)
+        dataset.build()

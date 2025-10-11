@@ -1,10 +1,21 @@
-# Path Configuration Guide
+## Project Structure
+
+```
+project/
+├── .env                    # Machine-specific paths (gitignored)
+├── .env.example           # Template for documentation (committed to git)
+└── src/config/
+    ├── __init__.py
+    └── paths.py           # Python module to load and provide paths
+```
+
+## Path Configuration Guide
 
 This project uses environment variables to manage machine-specific data paths, making it portable across different machines.
 
-## Setup
+### Setup
 
-### 1. Configure Your Paths
+#### 1. Configure Your Paths
 
 The `.env` file has been created with default paths. If you need to change them:
 
@@ -18,7 +29,7 @@ PROCESSED_DATA_DIR=/home/yuzhu/chaoyang/projects/Delinquency/delinquency/github/
 CHECKPOINT_DIR=/home/yuzhu/chaoyang/projects/Delinquency/delinquency/github/v2/checkpoint
 ```
 
-### 2. Using Paths in Code
+#### 2. Using Paths in Code
 
 Import the `paths` object from `src.config.paths`:
 
@@ -39,7 +50,7 @@ import polars as pl
 df = pl.read_ipc(paths.act_info, memory_map=False)
 ```
 
-### 3. Adding New Paths
+#### 3. Adding New Paths
 
 To add new paths to the configuration:
 
@@ -61,22 +72,13 @@ To add new paths to the configuration:
            self.new_data_dir = Path(os.getenv("NEW_DATA_DIR", "data/new_data"))
    ```
 
-## File Structure
 
-```
-v2/
-├── .env                    # Machine-specific paths (gitignored)
-├── .env.example           # Template for documentation (committed to git)
-└── src/config/
-    ├── __init__.py
-    └── paths.py           # Python module to load and provide paths
-```
 
-## Notes
+### Notes
 
 - `.env` is gitignored to prevent committing machine-specific paths
 - `.env.example` serves as documentation and should be committed
 - All paths are converted to `pathlib.Path` objects for cross-platform compatibility
-- Relative paths in `.env` are resolved relative to the project root (`v2/`)
+- Relative paths in `.env` are resolved relative to the project root
 - Absolute paths in `.env` are used as-is
 

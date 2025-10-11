@@ -3,6 +3,7 @@
 /data/
 data
 logs/
+.DS_Store*
 
 # Environment variables (machine-specific)
 .env
