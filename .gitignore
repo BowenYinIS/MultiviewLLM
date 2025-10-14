@@ -4,6 +4,7 @@
 data
 logs/
 .DS_Store*
+checkpoint/MultiviewLLM/TSModel/
 
 # unsloth
 unsloth_*
