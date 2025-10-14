@@ -8,5 +8,6 @@ data
 
 # Sketch notebook
 sketch.ipynb
+/src/utils/construct_graph.py
 
 
