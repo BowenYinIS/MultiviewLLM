@@ -121,8 +121,8 @@ class SampleIndexDataset:
             self.transaction
             # select relevant columns and remove duplicates
             .select(c.act_idn_sky, c.billing_date, c.bank_delinquency_label)
-            .sort(c.act_idn_sky, c.billing_date)
             .unique(["act_idn_sky", "billing_date"])
+            .sort(c.act_idn_sky, c.billing_date)
             # partition into dict: {(act_idn_sky,): DataFrame(billing_date, bank_delinquency_label)}
             .partition_by("act_idn_sky", maintain_order=True, as_dict=True, include_key=False)
         )
@@ -187,7 +187,7 @@ class SampleIndexDataset:
         # save the dataset
         save_path = (
             self.data_dir
-            + f"/samples_min{self.config['min_train_size']}mo_{'allprevious' if self.config['train_previous_all'] else 'fixed'}_{self.config['test_size']}test.feather"
+            + f"/index_min{self.config['min_train_size']}mo_{'allprevious' if self.config['train_previous_all'] else 'fixed'}_{self.config['test_size']}test.feather"
         )
         samples.write_ipc(save_path, compression="lz4")
         print(f"Dataset saved to {save_path}")

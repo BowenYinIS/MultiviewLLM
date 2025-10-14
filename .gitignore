@@ -3,11 +3,15 @@
 /data/
 data
 logs/
+.DS_Store*
+
+# unsloth
+unsloth_*
 
 # Environment variables (machine-specific)
 .env
 
 # Sketch notebook
-sketch.ipynb
+*.ipynb
 
 

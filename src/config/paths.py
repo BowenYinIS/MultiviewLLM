@@ -21,9 +21,9 @@ class DataPaths:
 
     def __init__(self):
         # Load paths from environment variables
-        self.raw_data_dir = Path(os.getenv("RAW_DATA_DIR", "data/raw_data"))
-        self.processed_data_dir = Path(os.getenv("PROCESSED_DATA_DIR", "data/processed_data"))
-        self.checkpoint_dir = Path(os.getenv("CHECKPOINT_DIR", "checkpoint"))
+        self.raw_data_dir = Path(os.getenv("RAW_DATA_DIR", "data/raw_data")).expanduser()
+        self.processed_data_dir = Path(os.getenv("PROCESSED_DATA_DIR", "data/processed_data")).expanduser()
+        self.checkpoint_dir = Path(os.getenv("CHECKPOINT_DIR", "checkpoint")).expanduser()
 
         # Ensure paths are absolute
         self._make_absolute()
