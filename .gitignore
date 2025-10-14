@@ -2,12 +2,19 @@
 .idea
 /data/
 data
+logs/
+.DS_Store*
+checkpoint/MultiviewLLM/TSModel/
+
+# unsloth
+unsloth_*
 
 # Environment variables (machine-specific)
 .env
 
 # Sketch notebook
 sketch.ipynb
-/src/utils/construct_graph.py
+*.ipynb
+
 
 
