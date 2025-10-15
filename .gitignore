@@ -14,5 +14,6 @@ unsloth_*
 
 # Sketch notebook
 *.ipynb
+*.pyc
 
 
