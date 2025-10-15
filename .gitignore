@@ -13,7 +13,9 @@ unsloth_*
 .env
 
 # Sketch notebook
+sketch.ipynb
 *.ipynb
 *.pyc
+
 
 

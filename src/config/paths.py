@@ -24,6 +24,7 @@ class DataPaths:
         self.raw_data_dir = Path(os.getenv("RAW_DATA_DIR", "data/raw_data")).expanduser()
         self.processed_data_dir = Path(os.getenv("PROCESSED_DATA_DIR", "data/processed_data")).expanduser()
         self.checkpoint_dir = Path(os.getenv("CHECKPOINT_DIR", "checkpoint")).expanduser()
+        self.tensorboard_log_dir = Path(os.getenv("TENSORBOARD_LOGS_DIR", "logs")).expanduser()
 
         # Ensure paths are absolute
         self._make_absolute()
@@ -57,7 +58,8 @@ class DataPaths:
             f"DataPaths(\n"
             f"  raw_data_dir={self.raw_data_dir},\n"
             f"  processed_data_dir={self.processed_data_dir},\n"
-            f"  checkpoint_dir={self.checkpoint_dir}\n"
+            f"  checkpoint_dir={self.checkpoint_dir},\n"
+            f"  tensorboard_log_dir={self.tensorboard_log_dir}\n"
             f")"
         )
 
