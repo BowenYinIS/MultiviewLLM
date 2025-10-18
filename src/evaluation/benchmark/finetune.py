@@ -1,14 +1,33 @@
+import functools
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import polars as pl
+import torch
 from datasets import Dataset
 from polars import col as c
 from src.config.paths import paths
 from src.utils.templates import templates
 from unsloth import FastModel
 from unsloth.chat_templates import get_chat_template, train_on_responses_only
+from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
 from trl import SFTConfig, SFTTrainer
+
+
+def timeit(func):
+    """Decorator to time function execution and print results"""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"✓ {func.__name__} completed in {elapsed_time:.2f} seconds")
+        return result
+
+    return wrapper
 
 
 class Finetune:
@@ -41,20 +60,22 @@ class Finetune:
         # start training
         trainer_stats = self.trainer.train()
 
+    @timeit
     def init_model(self):
         # load model and tokenizer
-        self.model, self.tokenizer = FastModel.from_pretrained(
+        model, tokenizer = FastModel.from_pretrained(
             model_name=self.llm_name,
             max_seq_length=32768,  # Choose any for long context!
+            device_map="cuda:0",
             load_in_4bit=True,  # 4 bit quantization to reduce memory
             load_in_8bit=False,  # [NEW!] A bit more accurate, uses 2x memory
             full_finetuning=False,  # [NEW!] We have full finetuning now!
         )
 
         # add LoRA adapters to model
-        self.model = FastModel.get_peft_model(
-            self.model,
-            r=32,  # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+        model = FastModel.get_peft_model(
+            model,
+            r=32,
             target_modules=[
                 "q_proj",
                 "k_proj",
@@ -65,20 +86,24 @@ class Finetune:
                 "down_proj",
             ],
             lora_alpha=32,
-            lora_dropout=0,  # Supports any, but = 0 is optimized
+            lora_dropout=0,  # Added small dropout
             bias="none",  # Supports any, but = "none" is optimized
             # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
-            use_gradient_checkpointing="unsloth",  # True or "unsloth" for very long context
+            use_gradient_checkpointing="unsloth",  # Disable gradient checkpointing to avoid issues
             random_state=3407,
             use_rslora=False,  # We support rank stabilized LoRA
             loftq_config=None,  # And LoftQ
         )
 
         # add chat template to tokenizer
-        self.tokenizer = get_chat_template(
-            self.tokenizer,
+        tokenizer = get_chat_template(
+            tokenizer,
             chat_template=self.chat_template,
         )
+
+        # assign the model and tokenizer to the class
+        self.model = model
+        self.tokenizer = tokenizer
 
     def build_dataset(self):
         # load samples
@@ -108,13 +133,12 @@ class Finetune:
             sys_msg = self.sys_msg_template
 
             # Truncate transaction history if needed
-            transaction_text = sample["transaction_text"]
-            # transaction_text, was_truncated = self._truncate_transaction_history(
-            #     sample["transaction_text"], max_tokens=self.max_transaction_tokens
-            # )
+            transaction_text, was_truncated = self._truncate_transaction_history(
+                sample["transaction_text"], max_tokens=self.max_transaction_tokens
+            )
 
-            # if was_truncated:
-            #     truncation_count += 1
+            if was_truncated:
+                truncation_count += 1
 
             # build the user message
             user_msg = self.user_msg_template.format(
@@ -129,8 +153,8 @@ class Finetune:
             )
 
             # Track max tokens for reporting
-            # prompt_tokens = self._count_tokens(sys_msg + user_msg)
-            # max_tokens_seen = max(max_tokens_seen, prompt_tokens)
+            prompt_tokens = self._count_tokens(sys_msg + user_msg)
+            max_tokens_seen = max(max_tokens_seen, prompt_tokens)
 
             # assemble the final prompt
             prompt = [
@@ -140,10 +164,8 @@ class Finetune:
             ]
             prompts.append(prompt)
 
-        # convert the prompts to dataset
+        # convert the prompts to dataset with formatted text directly
         dataset = Dataset.from_dict({"conversations": prompts})
-
-        # apply chat template to the prompts
         dataset = dataset.map(self._formatting_prompts_func, batched=True)
 
         # store the prompts and samples as class attribute
@@ -155,40 +177,45 @@ class Finetune:
         self._print_sample_info(truncation_count, len(prompts), max_tokens_seen)
 
     def init_trainer(self):
+        # Create training arguments
         trainer = SFTTrainer(
-            model = self.model,
-            tokenizer = self.tokenizer,
-            train_dataset = self.dataset,
-            eval_dataset = None, # Can set up evaluation!
-            args = SFTConfig(
-                dataset_text_field = "text",
-                per_device_train_batch_size = 2,
-                gradient_accumulation_steps = 4, # Use GA to mimic batch size!
-                warmup_steps = 5,
-                # num_train_epochs = 1, # Set this for 1 full training run.
-                max_steps = 60,
-                learning_rate = 2e-4, # Reduce to 2e-5 for long training runs
-                logging_steps = 1,
-                optim = "adamw_8bit",
-                weight_decay = 0.01,
-                lr_scheduler_type = "linear",
-                seed = 3407,
-                report_to = "none", # Use this for WandB etc
+            model=self.model,
+            dataset_num_proc=2,
+            tokenizer=self.tokenizer,
+            train_dataset=self.dataset,
+            eval_dataset=None,  # Can set up evaluation!
+            args=SFTConfig(
+                dataset_text_field="text",
+                per_device_train_batch_size=1,
+                gradient_accumulation_steps=1,  # Use GA to mimic batch size!
+                warmup_steps=5,
+                num_train_epochs=1,  # Set this for 1 full training run.
+                # max_steps = 60,
+                learning_rate=2e-4,  # Reduce to 2e-5 for long training runs
+                logging_steps=1,
+                optim="adamw_8bit",
+                weight_decay=0.01,
+                lr_scheduler_type="linear",
+                seed=3407,
+                report_to="none",  # Use this for WandB etc
+                max_seq_length=32768,  # Match model's max_seq_length
             ),
         )
 
-        # ensure the it's only trained on the completion part
+        # ensure to only train on completion
         self.trainer = train_on_responses_only(
             trainer,
-            instruction_part = "<|im_start|>user\n",
-            response_part = "<|im_start|>assistant\n",
+            instruction_part="<|im_start|>user\n",
+            response_part="<|im_start|>assistant\n",
         )
 
     def _print_prompt_masking(self):
         # print an example to check if instruction masking is done
         # let's select sample #2
-        print(f"Sample #2:\n{self.tokenizer.decode(self.trainer.train_dataset[2]["input_ids"])}")
-        print(f"Sample #2 (after masking):\n{self.tokenizer.decode([self.tokenizer.pad_token_id if x == -100 else x for x in self.trainer.train_dataset[2]["labels"]]).replace(self.tokenizer.pad_token, " ")}")
+        print(f"Sample #2:\n{self.tokenizer.decode(self.trainer.train_dataset[2]['input_ids'])}")
+        print(
+            f"Sample #2 (after masking):\n{self.tokenizer.decode([self.tokenizer.pad_token_id if x == -100 else x for x in self.trainer.train_dataset[2]['labels']]).replace(self.tokenizer.pad_token, ' ')}"
+        )
 
     def _truncate_transaction_history(self, transaction_text: str, max_tokens: int) -> tuple[str, bool]:
         """
@@ -265,17 +292,19 @@ class Finetune:
         texts = [
             self.tokenizer.apply_chat_template(convo, tokenize=False, add_generation_prompt=False) for convo in convos
         ]
-        return {"text": texts}
+        return {
+            "text": texts
+        }
 
 
 def main():
     config = {
         "is_cot_prompt": False,
         "has_protected_attributes": False,
-        "llm_name": "unsloth/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit",  # "unsloth/Qwen3-30B-A3B-Instruct-2507",
+        "llm_name": "unsloth/Qwen3-4B-Instruct-2507",  # "unsloth/Qwen3-30B-A3B-Instruct-2507",
         "max_transaction_tokens": 28500,
-        "max_prompts": 50,
-        "sample_path": "llm_benchmark/samples_min12mo_fixed_2test.feather",
+        "max_prompts": 16,
+        "sample_path": "llm_benchmark/samples_min6mo_fixed_2test.feather",
         "split": ["test"],
     }
 

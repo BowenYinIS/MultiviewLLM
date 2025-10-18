@@ -1,4 +1,7 @@
+import functools
 import json
+import socket
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -6,14 +9,26 @@ from zoneinfo import ZoneInfo
 import polars as pl
 import tiktoken
 from openai import OpenAI
-from polars import col as c, lit
+from polars import col as c
+from polars import lit
 from src.config.paths import paths
 from src.utils.templates import templates
-import socket
 from tqdm import tqdm
 
 
-class PureLLM:
+def timeit(func):
+    """Decorator to time function execution and print results"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        start_time = time.time()
+        result = func(*args, **kwargs)
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+        print(f"✓ {func.__name__} completed in {elapsed_time:.2f} seconds")
+        return result
+    return wrapper
+
+class NaiveLLM:
     def __init__(self, config):
         """
         Initialize the inference pipeline with configuration
@@ -48,7 +63,8 @@ class PureLLM:
         with ThreadPoolExecutor(max_workers=self.config["max_workers"]) as executor:
             # Submit all tasks
             future_to_idx = {
-                executor.submit(self.infer_single_sample, prompt): idx for idx, prompt in enumerate(self.prompts)
+                executor.submit(self.infer_single_sample, prompt): idx
+                for idx, prompt in enumerate(self.prompts)
             }
 
             # Collect results as they complete with progress bar
@@ -66,6 +82,7 @@ class PureLLM:
         # save the results
         self.save_predictions()
 
+    @timeit
     def build_prompts(self):
         """Build the prompts from samples and templates.
 
@@ -81,6 +98,10 @@ class PureLLM:
 
         # select the split
         samples = samples.filter(c.split.is_in(self.split))
+
+        # limit the number of samples
+        if self.max_prompts:
+            samples = samples[:self.max_prompts]
 
         # load the prompt template
         self.sys_msg_template = templates.get_purellm_sys_msg(self.is_cot_prompt)
@@ -126,11 +147,6 @@ class PureLLM:
             }
             prompts.append(prompt)
 
-        # limit the number of prompts
-        if self.max_prompts:
-            prompts = prompts[: self.max_prompts]
-            samples = samples[: self.max_prompts]
-
         # store the prompts and samples as class attribute
         self.prompts = prompts
         self.samples = samples
@@ -138,6 +154,7 @@ class PureLLM:
         # print one prompt for debugging
         self._print_prompt_example(prompt, truncation_count, len(prompts), max_tokens_seen)
 
+    @timeit
     def initialize_llm(self):
         """
         Initialize the language model based on configuration
@@ -146,27 +163,58 @@ class PureLLM:
             api_key="EMPTY",
             base_url="http://localhost:8080/v1",
         )
-        if self.llm_name.startswith("unsloth/Qwen3-30B-A3B-Instruct"):
-            # Store generation parameters separately
+
+        # Verify the model running on llama.cpp matches the configured model
+        self._verify_model_match()
+
+        if "qwen3" in self.llm_name.lower():
+            if "instruct" in self.llm_name.lower():
+                self.generation_params = {
+                    "model": self.llm_name,
+                    "temperature": 0.7,
+                    "top_p": 0.80,
+                    "presence_penalty": 1.0,
+                    "response_format": {"type": "json_object"},
+                }
+            elif "thinking" in self.llm_name.lower():
+                self.generation_params = {
+                    "model": self.llm_name,
+                    "temperature": 0.6,
+                    "top_p": 0.95,
+                    "presence_penalty": 1.0,
+                }
+        elif "qwen2.5" in self.llm_name.lower():
             self.generation_params = {
                 "model": self.llm_name,
-                "temperature": 0.7,
-                "top_p": 0.80,
-                "presence_penalty": 1.0,
-                "response_format": {"type": "json_object"},
-                # Note: llama.cpp server handles top_k and min_p from the server config
-            }
-        elif self.llm_name.startswith("unsloth/Qwen3-30B-A3B-Thinking"):
-            # For Thinking models, DO NOT use response_format to preserve reasoning_content
-            # The model will output thinking in reasoning_content, but we need to extract JSON from it
-            self.generation_params = {
-                "model": self.llm_name,
-                "temperature": 0.6,
-                "top_p": 0.95,
-                "presence_penalty": 1.0,
             }
         else:
             raise ValueError(f"Unsupported model: {self.llm_name}")
+
+    def _verify_model_match(self):
+        """
+        Verify that the model name in config matches the model running on llama.cpp server.
+        Raises ValueError if they don't match.
+        """
+        try:
+            models_response = self.llm.models.list()
+            server_models = [model.id for model in models_response.data]
+            server_model = server_models[0]  # llama.cpp typically serves one model
+
+            # Check if the configured model matches the server model
+            if self.llm_name.split("/")[-1].split(":")[0] not in server_model:
+                raise ValueError(
+                    f"Model mismatch!\n"
+                    f"  Configured model: {self.llm_name}\n"
+                    f"  Server model:     {server_model}\n"
+                    f"Please update the config or restart llama.cpp with the correct model."
+                )
+
+            print(f"✓ Model verification passed: {self.llm_name}")
+
+        except Exception as e:
+            if isinstance(e, ValueError):
+                raise
+            raise ValueError(f"Failed to verify model on llama.cpp server: {e}")
 
     def infer_single_sample(self, prompt):
         """
@@ -184,7 +232,9 @@ class PureLLM:
         ]
 
         # generate response and message
-        response = self.llm.chat.completions.create(messages=messages, **self.generation_params).choices[0]
+        response = self.llm.chat.completions.create(
+            messages=messages, **self.generation_params
+        ).choices[0]
         message = response.message
 
         # Extract both reasoning and final answer
@@ -194,7 +244,10 @@ class PureLLM:
         reasoning_process = getattr(message, "reasoning_content", None)
 
         # parse response into dict
-        parsed_response = json.loads(prediction)
+        try:
+            parsed_response = json.loads(prediction)
+        except json.JSONDecodeError:
+            parsed_response = {"is_delinquent_raw": prediction}
         parsed_response["reasoning_process"] = reasoning_process
 
         return parsed_response
@@ -215,7 +268,9 @@ class PureLLM:
         preds = pl.concat([self.samples, preds], how="horizontal")
 
         # add config to the output table (use lit() to avoid column reference issues)
-        config_cols = {f"config_{key}": lit(value) for key, value in self.config.items() if key != "split"}
+        config_cols = {
+            f"config_{key}": lit(value) for key, value in self.config.items() if key != "split"
+        }
         preds = preds.with_columns(**config_cols)
 
         # save the preds table
@@ -224,15 +279,17 @@ class PureLLM:
             / f"preds_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y%m%d_%H%M%S')}.feather"
         )
         preds.write_ipc(str(save_path), compression="lz4")
-        print("-" * 60)
-        print(f"Saved predictions to {save_path.name}")
+        print("-" * 30)
+        print(f"Saved predictions to {save_path.name}\n\n\n")
 
     def _print_prompt_example(self, prompt, truncation_count, total_prompts, max_tokens_seen):
         """
         Print the prompt example with truncation statistics
         """
         print("=" * 60)
-        print(f"Building Prompts...({datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')})")
+        print(
+            f"Building Prompts...({datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')})"
+        )
         print("=" * 60)
         print()
         print(f"[USING LLM]: {self.llm_name}\n")
@@ -242,7 +299,9 @@ class PureLLM:
         print(f"  - Max prompt tokens seen: {max_tokens_seen:,}")
 
         if truncation_count > 0:
-            print(f"\n⚠️  TRUNCATION: {truncation_count}/{total_prompts} prompts had transaction history truncated")
+            print(
+                f"\n⚠️  TRUNCATION: {truncation_count}/{total_prompts} prompts had transaction history truncated"
+            )
         else:
             print(f"\n✓ No truncation needed for {total_prompts} prompts")
 
@@ -265,7 +324,9 @@ class PureLLM:
         """
         return len(self.tokenizer.encode(text))
 
-    def _truncate_transaction_history(self, transaction_text: str, max_tokens: int) -> tuple[str, bool]:
+    def _truncate_transaction_history(
+        self, transaction_text: str, max_tokens: int
+    ) -> tuple[str, bool]:
         """
         Truncate transaction history to fit within token limit.
         Keeps most recent transactions (end of text) since they're more relevant.
@@ -309,20 +370,26 @@ def main():
     """
     Main function to run inference with different configurations
     """
+
     # base inference configuration
     shared_config = {
         "max_prompts": None,
         "max_workers": 16,  # Number of concurrent threads (should match server's -np value - optimal)
         "split": ["test"],
-        "llm_name": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_XL",
+        "llm_name": "Qwen/Qwen2.5-7B-Instruct-GGUF:Q4_K_M",
         "max_transaction_tokens": 28500,  # Maximum tokens for transaction history
     }
 
     configs = [
         {
-            "is_cot_prompt": True,
+            "is_cot_prompt": False,
             "has_protected_attributes": False,
             "sample_path": "llm_benchmark/samples_min6mo_fixed_2test.feather",
+        },
+        {
+            "is_cot_prompt": False,
+            "has_protected_attributes": False,
+            "sample_path": "llm_benchmark/samples_min12mo_fixed_2test.feather",
         },
     ]
     for config in configs:
@@ -330,7 +397,7 @@ def main():
         config = shared_config | config
 
         # create inference pipeline
-        inference_pipeline = PureLLM(config)
+        inference_pipeline = NaiveLLM(config)
 
         # run inference
         inference_pipeline.run_inference()
