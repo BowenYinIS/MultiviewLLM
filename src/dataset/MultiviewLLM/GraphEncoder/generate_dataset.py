@@ -144,7 +144,7 @@ class GenerateGraphDataset:
             x=torch.tensor([nodes_list], dtype=torch.long).T,  # Node features (2, mcc_cde_index)
             edge_index=torch.tensor(edge_index, dtype=torch.long),  # Edge indices (2, num_edges)
             edge_attr=torch.tensor([edge_weight], dtype=torch.float).T,  # Edge weights (num_edges, 1)
-            meta_info={'index': index, 'act_idn_sky': act_idn_sky},
+            meta_info={'index': str(index), 'act_idn_sky': act_idn_sky},  # Alert: index must be str to avoid potential issues in DataLoader of PyG (int will be incremented automatically)
             y=torch.tensor([label], dtype=torch.long)  # Target label (1, )
         )
         return graph
@@ -183,10 +183,15 @@ if __name__ == '__main__':
     # Define configuration
     from src.config.MultiviewLLM.GraphEncoder.config import generate_dataset_config as config
 
-    for file in Path('/data/bwyin/project/MultiviewLLM/processed_data/sample_index').glob('samples_*.feather'):
-        # Update sample index path in config
-        config['sample_index_path'] = file
-        print(f"Processing sample index: {file.name}")
-        # Generate dataset
-        generator = GenerateGraphDataset(config)
-        generator.build()
+    # Generate dataset
+    print(f"Processing sample index: {config['sample_index_path'].name}")
+    generator = GenerateGraphDataset(config)
+    generator.build()
+
+    # for file in Path('/data/bwyin/project/MultiviewLLM/processed_data/sample_index').glob('samples_*.feather'):
+    #     # Update sample index path in config
+    #     config['sample_index_path'] = file
+    #     print(f"Processing sample index: {file.name}")
+    #     # Generate dataset
+    #     generator = GenerateGraphDataset(config)
+    #     generator.build()

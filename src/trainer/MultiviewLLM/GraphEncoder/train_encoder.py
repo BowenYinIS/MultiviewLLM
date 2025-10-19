@@ -159,13 +159,13 @@ def main(config):
     optimizer = Adam(encoder_model.parameters(), lr=config['learning_rate'])
 
     # Training and evaluation functions
-    test_result = test(encoder_model, dataloader)
+    test_result = test(encoder_model, dataloader)  # if test cost is too high, comment this line
     for k, v in test_result.items():
         run.summary[f'Initial/{k}'] = v
     for epoch in range(config['epochs']):
         # train(encoder_model, contrast_model, dataloader, optimizer, writer, epoch, device, semantic_contrast_model)  # using tensorboard
         train(encoder_model, contrast_model, dataloader, optimizer, run, epoch, device, semantic_contrast_model)  # using wandb
-    test_result = test(encoder_model, dataloader)
+    test_result = test(encoder_model, dataloader)  # if test cost is too high, comment this line
     for k, v in test_result.items():
         run.summary[f'Final/{k}'] = v
 
@@ -175,18 +175,20 @@ def main(config):
     torch.save(encoder_model.state_dict(), model_save_path)
 
     # Save the embeddings
+    dataloader = DataLoader(dataset, batch_size=config['batch_size'], shuffle=False, drop_last=False)
     encoder_model.eval()
     all_node_embeds = {}
     all_graph_embeds = {}
-    for data in dataloader:
-        data = data.to(device)
-        z, g, _, _, _, _, _ = encoder_model(data.x, data.edge_index, data.edge_attr, data.batch)
-        sizes = torch.bincount(data.batch)
-        z_pre_graph = list(torch.split(z, sizes.tolist(), dim=0))
-        indexes = data['meta_info']['index'].tolist()
-        for i, idx in enumerate(indexes):
-            all_node_embeds[idx] = z_pre_graph[i].cpu()
-            all_graph_embeds[idx] = g[i].unsqueeze(0).cpu()
+    with torch.no_grad():
+        for data in dataloader:
+            data = data.to(device)
+            z, g, _, _, _, _, _ = encoder_model(data.x, data.edge_index, data.edge_attr, data.batch)
+            sizes = torch.bincount(data.batch)
+            z_pre_graph = list(torch.split(z, sizes.tolist(), dim=0))
+            indexes = data['meta_info']['index']
+            for i, idx in enumerate(indexes):
+                all_node_embeds[idx] = z_pre_graph[i].cpu()
+                all_graph_embeds[idx] = g[i].unsqueeze(0).cpu()
 
     graph_embed_save_path = config['embed_save_path'] / config['dataset_path'].name.replace('_graph.pt', '_graph_embed.pt')
     with open(graph_embed_save_path, 'wb') as f:

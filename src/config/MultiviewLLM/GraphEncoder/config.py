@@ -14,7 +14,7 @@ import torch
 
 
 generate_dataset_config = {
-    "sample_index_path": Path(paths.processed_data_dir, 'sample_index', 'samples_min6mo_allprevious_2test.feather'),
+    "sample_index_path": Path(paths.processed_data_dir, 'sample_index', 'samples_min6mo_fixed_2test.feather'),
     "encoder_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'encoder.json'),
     "normalize_edge_weight": True,
     "output_data_dir": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder'),
@@ -32,7 +32,7 @@ train_config = {
     "device": 'cuda:0' if torch.cuda.is_available() else 'cpu',
     "seed": 42,
     "encoder_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'encoder.json'),
-    "dataset_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'samples_min12mo_fixed_2test_graph.pt'),
+    "dataset_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'samples_min6mo_fixed_2test_graph.pt'),
     "mcc_embed_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'mcc_embed.pt'),
     "model_save_path": Path(paths.checkpoint_dir, 'MultiviewLLM', 'GraphEncoder'),
     "embed_save_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder'),
