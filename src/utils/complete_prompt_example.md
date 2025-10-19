@@ -76,3 +76,20 @@ prompt = [
     {"role": "assistant", "content": f"{{'is_delinquent': {target_delinquency}}}"},
 ]
 ```
+
+## LLM Completion Examples
+### From Qwen2.5
+Example outputs from Qwen2.5 that can't directly be parsed by `json.loads`:
+
+```python
+[
+    '```json\n{\n    "is_delinquent": false\n}\n```\n\n根据提供的数据，用户在所有给定的账单周期中均未出现违约情况，并且消费行为较为稳定。因此预测该用户在最新一个账单周期能按时还款。',
+    '```json\n{\n    "is_delinquent": false\n}\n```\n\n注：根据给定的用户历史数据，该用户在过去几个账单周期内均按时还款，因此预测其在最新一个账单周期也能按时还款。',
+    '```json\n{\n    "is_delinquent": false\n}\n```\n\n根据提供的用户信息和信用卡历史数据，该用户在过去几个账单周期中均按时还款，没有违约记录。因此，预测其在最新一个账单周期能够按时还款。',
+    '```json\n{\n    "is_delinquent": false\n}\n```\n\n根据提供的信息，用户在过去的账单周期中，虽然有两次违约记录，但最近的几次账单周期均未出现违约情况。因此，预测该用户在最新一个账单周期能够按时还款。',
+    '```json\n{\n    "is_delinquent": true\n}\n```\n\n根据给定的历史数据，用户在过去多个账单周期中均出现违约情况。基于此历史表现，预测该用户在最新一个账单周期内也有可能无法按时还款。',
+    '```json\n{\n    "is_delinquent": false\n}\n```\n\n根据提供的数据，该用户在过去的所有账单周期中均未出现违约情况，且消费行为稳定，因此预测其在最新一个账单周期也能够按时还款。',
+    '```json\n{\n    "is_delinquent": false\n}\n```\n\n根据提供的数据，用户在过去几个账单周期均未出现违约情况，并且所有消费记录均按时完成。因此预测在最新一个账单周期该用户能按时还款。',
+    '```json\n{\n    "is_delinquent": false\n}\n```\n\n根据提供的用户信息和信用卡历史数据，该用户在过去多个账单周期中均未出现违约情况，并且消费行为稳定。因此，预测其在最新一个账单周期能够按时还款。'
+ ]
+```
