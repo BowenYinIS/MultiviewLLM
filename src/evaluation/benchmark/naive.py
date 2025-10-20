@@ -36,7 +36,19 @@ class NaiveLLM:
         # get configurations
         self.config = config
         self.max_prompts = config["max_prompts"]
-        self.max_workers = config["max_workers"]
+        
+        # Determine max_workers based on hostname if not provided
+        if "max_workers" in config:
+            self.max_workers = config["max_workers"]
+        else:
+            hostname = socket.gethostname()
+            if hostname == "yu-lerner":
+                self.max_workers = 8
+            elif hostname == "hopper":
+                self.max_workers = 16
+            else:
+                self.max_workers = 16  # default
+        
         self.sample_path = paths.processed_data_dir / config["sample_path"]
         self.has_protected_attributes = config["has_protected_attributes"]
         self.llm_name = config["llm_name"]
@@ -44,6 +56,7 @@ class NaiveLLM:
         self.is_cot_prompt = config["is_cot_prompt"]
         self.max_transaction_tokens = config["max_transaction_tokens"]
         self.host = socket.gethostbyname(socket.gethostname())
+        self.use_transaction_summary = config["use_transaction_summary"]
 
         # Initialize tiktoken encoder for accurate token counting
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -60,7 +73,7 @@ class NaiveLLM:
         self.initialize_llm()
 
         self.responses = []
-        with ThreadPoolExecutor(max_workers=self.config["max_workers"]) as executor:
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all tasks
             future_to_idx = {
                 executor.submit(self.infer_single_sample, prompt): idx
@@ -104,8 +117,8 @@ class NaiveLLM:
             samples = samples[:self.max_prompts]
 
         # load the prompt template
-        self.sys_msg_template = templates.get_purellm_sys_msg(self.is_cot_prompt)
-        self.user_msg_template = templates.get_purellm_user_msg(self.has_protected_attributes)
+        self.sys_msg_template = templates.get_naivellm_sys_msg(self.is_cot_prompt)
+        self.user_msg_template = templates.get_naivellm_user_msg(self.has_protected_attributes)
 
         # build the prompts
         prompts = []
@@ -116,13 +129,15 @@ class NaiveLLM:
             # build the system message
             sys_msg = self.sys_msg_template
 
-            # Truncate transaction history if needed
-            transaction_text, was_truncated = self._truncate_transaction_history(
-                sample["transaction_text"], max_tokens=self.max_transaction_tokens
-            )
-
-            if was_truncated:
-                truncation_count += 1
+            # get transaction history
+            if self.use_transaction_summary:
+                transaction_history = sample["transaction_summary"]
+            else:
+                transaction_history, was_truncated = self._truncate_transaction_history(
+                    sample["transaction_text"], max_tokens=self.max_transaction_tokens
+                )
+                if was_truncated:
+                    truncation_count += 1
 
             # build the user message
             user_msg = self.user_msg_template.format(
@@ -133,7 +148,7 @@ class NaiveLLM:
                 birth_year=sample["birth_year"],
                 sex=sample["sex"],
                 marriage_status=sample["marriage_status"],
-                transaction_history=transaction_text,
+                transaction_history=transaction_history,
             )
 
             # Track max tokens for reporting
@@ -183,7 +198,7 @@ class NaiveLLM:
                     "top_p": 0.95,
                     "presence_penalty": 1.0,
                 }
-        elif "qwen2.5" in self.llm_name.lower():
+        elif "qwen2" in self.llm_name.lower(): # including qwen2.5
             self.generation_params = {
                 "model": self.llm_name,
             }
@@ -374,9 +389,8 @@ def main():
     # base inference configuration
     shared_config = {
         "max_prompts": None,
-        "max_workers": 16,  # Number of concurrent threads (should match server's -np value - optimal)
         "split": ["test"],
-        "llm_name": "Qwen/Qwen2.5-7B-Instruct-GGUF:Q4_K_M",
+        "llm_name": "qwen2.5-7b-instruct",
         "max_transaction_tokens": 28500,  # Maximum tokens for transaction history
     }
 
@@ -384,11 +398,13 @@ def main():
         {
             "is_cot_prompt": False,
             "has_protected_attributes": False,
+            "use_transaction_summary": True,
             "sample_path": "llm_benchmark/samples_min6mo_fixed_2test.feather",
         },
         {
             "is_cot_prompt": False,
             "has_protected_attributes": False,
+            "use_transaction_summary": True,
             "sample_path": "llm_benchmark/samples_min12mo_fixed_2test.feather",
         },
     ]

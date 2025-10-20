@@ -10,13 +10,13 @@ Output:
     Dataset that are used as input for benchmark LLM models
 """
 
+import json
 import re
 
 import polars as pl
 from polars import col as c
-from tqdm import tqdm
-
 from src.config.paths import paths
+from tqdm import tqdm
 
 
 class LlmDataset:
@@ -45,6 +45,35 @@ class LlmDataset:
             paths.processed_data_dir / f"sample_index/{self.sample_index_name}.feather",
             memory_map=False,
         )
+
+    def build(self):
+        """
+        Build the complete dataset by constructing cycle units and assembling samples.
+
+        Returns:
+            pl.DataFrame: The assembled dataset with train/test splits ready for LLM benchmarking.
+        """
+        # build cycle units
+        self.build_cycle_units()
+
+        # assemble samples
+        self.assemble_samples()
+
+        # add transaction summary
+        self.add_transaction_summary()
+
+        print(f"Dataset built: {len(self.samples)} samples")
+        print(
+            f"\tTrain: {(self.samples['split'] == 'train').sum()}, Test: {(self.samples['split'] == 'test').sum()}"
+        )
+
+        # save the dataset
+        save_path = (
+            paths.processed_data_dir
+            / f"llm_benchmark/{self.sample_index_name.replace('index', 'samples')}.feather"
+        )
+        self.samples.write_ipc(save_path, compression="lz4")
+        print(f"Dataset saved to {save_path.name}")
 
     def build_cycle_units(self):
         """
@@ -177,31 +206,30 @@ class LlmDataset:
         # convert the results to a dataframe
         self.samples = pl.DataFrame(samples)
 
-    def build(self):
+    def add_transaction_summary(self):
         """
-        Build the complete dataset by constructing cycle units and assembling samples.
-
-        Returns:
-            pl.DataFrame: The assembled dataset with train/test splits ready for LLM benchmarking.
+        Add cycle-level transaction summary (from Bowen) to the sample
         """
-        # build cycle units
-        self.build_cycle_units()
-
-        # assemble samples
-        self.assemble_samples()
-
-        print(f"Dataset built: {len(self.samples)} samples")
-        print(
-            f"\tTrain: {(self.samples['split'] == 'train').sum()}, Test: {(self.samples['split'] == 'test').sum()}"
+        # check if transaction summary file exists
+        summary_path = "_".join(self.sample_index_name.split("_")[1:])
+        summary_path = (
+            paths.processed_data_dir / f"llm_benchmark/txn_summary_{summary_path}.json"
         )
 
-        # save the dataset
-        save_path = (
-            paths.processed_data_dir
-            / f"llm_benchmark_samples/{self.sample_index_name.replace('index', 'samples')}.feather"
+        # if the summary file does not exist, skip
+        if not summary_path.exists():
+            return
+
+        # read the transaction summary
+        with open(summary_path, "r") as f:
+            summaries = list(json.load(f).values())
+
+        # add the transaction summary to the sample
+        self.samples = (
+            self.samples
+            # add the transaction summary
+            .with_columns(transaction_summary=pl.Series(summaries))
         )
-        self.samples.write_ipc(save_path, compression="lz4")
-        print(f"Dataset saved to {save_path.name}")
 
 
 if __name__ == "__main__":
