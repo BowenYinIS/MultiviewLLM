@@ -40,6 +40,7 @@ train_config = {
     "writer_path": Path(paths.tensorboard_log_dir, 'MultiviewLLM', 'GraphEncoder'),  # for TensorBoard
     "entity": "bwyin-peking-university",  # for wandb
     "project": "MultiviewLLM_GraphEncoder",  # for wandb
+    "run_name": "graph_encoder_experiment",  # for wandb
     "batch_size": 128,
     "epochs": 20,
     "learning_rate": 0.01,

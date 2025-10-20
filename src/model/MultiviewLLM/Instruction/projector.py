@@ -142,10 +142,7 @@ class Projector(nn.Module):
             ffw_ratio=ffw_ratio,
         )
 
-        self.llm_embed = llm_embed
-        if self.llm_embed:
-            for param in self.llm_embed.parameters():
-                param.requires_grad = False
+        self.llm_embed = nn.Embedding.from_pretrained(llm_embed.weight.detach().clone(), freeze=True)
 
     @staticmethod
     def _scatter_slots(inputs_embeds, where_mask, slots):

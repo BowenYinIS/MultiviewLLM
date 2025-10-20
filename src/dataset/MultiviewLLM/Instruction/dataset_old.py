@@ -6,16 +6,12 @@ import json
 
 class InstructionDataset(Dataset):
     def __init__(self, tokenizer, config, data, g_bank=None, g_pad=None, g_pad_index=None,
-                 ts_bank=None, ts_pad=None, ts_pad_index=None,
-                 is_test=False, remove_graph=False, remove_ts=False):
+                 ts_bank=None, ts_pad=None, ts_pad_index=None):
         self.tokenizer = tokenizer
         self.config = config
         self.data = data
         self.g_bank, self.g_pad, self.g_pad_index = g_bank, g_pad, g_pad_index
         self.ts_bank, self.ts_pad, self.ts_pad_index = ts_bank, ts_pad, ts_pad_index
-        self.is_test = is_test
-        self.is_remove_graph = remove_graph
-        self.is_remove_ts = remove_ts
 
         # Expand placeholder tokens in prompt
         self.g_expand_tokens = " ".join([f"<G_PLACEHOLDER {i}>" for i in range (1, 1 + self.config['query_num'])])
@@ -41,46 +37,14 @@ class InstructionDataset(Dataset):
         response = row.get('output', '')
 
         # Replace placeholder tokens in prompt with actual token ids
-        if self.is_remove_graph:
-            prompt = prompt.replace("【图表征描述】:\n", "")
-            prompt = prompt.replace("<G_PLACEHOLDER>\n\n", "")
-        else:
-            prompt = prompt.replace("<G_PLACEHOLDER>", self.g_expand_tokens)
-
-        if self.is_remove_ts:
-            prompt = prompt.replace("【时序特征描述】:\n", "")
-            prompt = prompt.replace("<TS_PLACEHOLDER>\n\n", "")
-        else:
-            prompt = prompt.replace("<TS_PLACEHOLDER>", self.ts_expand_tokens)
+        prompt = prompt.replace("<G_PLACEHOLDER>", self.g_expand_tokens)
+        prompt = prompt.replace("<TS_PLACEHOLDER>", self.ts_expand_tokens)
 
         # Get token ids and labels
         instruction_messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt},
         ]
-        if self.is_test:
-            instruction_messages = self.tokenizer.apply_chat_template(instruction_messages,
-                                                                         tokenize=False,
-                                                                         add_generation_prompt=True)
-
-            # response = json.dumps({'is_delinquent': response}, ensure_ascii=False, indent=4)
-            # response = response.split(':')[0] + ': "'
-            response = '根据用户提供的信息以及只能回答"true"或"false"的指令，我预测该账户是否存在逾期风险的结果是'
-            instruction_messages = instruction_messages + response
-            full_ids = self.tokenizer(instruction_messages,
-                                        return_tensors='pt',
-                                        padding='max_length',
-                                        max_length=self.config['padding_length'],
-                                        truncation=True)['input_ids']
-            labels = full_ids.clone()
-            labels[labels == self.tokenizer.pad_token_id] = -100  # Mask padding part in labels
-            return {'input_ids': full_ids,
-                    'labels': labels,
-                    'original_tag': row['original_tag'],
-                    'graph_sample_index': row['graph_index'],
-                    'ts_sample_index': row['ts_index'],
-                    }
-
         instruction_ids = self.tokenizer.apply_chat_template(instruction_messages,
                                                              tokenize=True,
                                                              add_generation_prompt=True)

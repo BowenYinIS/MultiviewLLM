@@ -115,7 +115,7 @@ def main(config):
     # To use tensorboard, run in terminal:
     # tensorboard --logdir=/data/bwyin/project/MultiviewLLM/tensorboard_logs/MultiviewLLM/GraphEncoder --bind_all
     # writer = SummaryWriter(log_dir=config['writer_path'])
-    run = wandb.init(project=config['project'], entity=config['entity'], config=config)
+    run = wandb.init(project=config['project'], entity=config['entity'], name=config['run_name'], config=config)
 
     # Load dataset
     dataset = make_dataset(config['dataset_path'])

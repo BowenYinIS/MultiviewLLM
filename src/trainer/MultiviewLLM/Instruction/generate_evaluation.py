@@ -35,11 +35,11 @@ def generate_on_loader_no_accel(projector,
     # 生成参数
     if gen_kwargs is None:
         gen_kwargs = dict(
-            max_new_tokens=64,
-            do_sample=False,          # 评测通常不采样
-            temperature=0.0,
-            top_p=1.0,
-            num_beams=1,
+            max_new_tokens=16,
+            do_sample=True,
+            temperature=0.7,
+            top_p=0.8,
+            repetition_penalty=1.05,
             use_cache=True,
             eos_token_id=tokenizer.eos_token_id,
             pad_token_id=(tokenizer.pad_token_id
@@ -106,33 +106,45 @@ def generate_on_loader_no_accel(projector,
     return results
 
 
-def main(config):
+def main(config, save_name, remove_graph=False, remove_ts=False):
     tokenizer = create_tokenizer(config)
-    train_loader, test_loader = create_dataloader(config, tokenizer)
-    projector, language_model, optimizer, warmup_scheduler = create_model_and_optimizer(config, tokenizer, train_loader)
+    train_loader, test_loader = create_dataloader(config, tokenizer, remove_graph=remove_graph, remove_ts=remove_ts)
+    for batch in test_loader:
+        print(f"Test batch keys: {batch.keys()}")
+        break
 
-    projector.load_state_dict(torch.load(config['load_checkpoint_path'], map_location='cpu'))
+    model, optimizer, warmup_scheduler = create_model_and_optimizer(config, tokenizer, train_loader)
+
+    model.projector.load_state_dict(torch.load(config['load_checkpoint_path'], map_location='cpu'))
     print(f"[Load] Loaded projector checkpoint from {config['load_checkpoint_path']}")
 
     # 使用原生 PyTorch 进行生成
     generate_on_loader_no_accel(
-        projector=projector,
-        language_model=language_model,
+        projector=model.projector,
+        language_model=model.language_model,
         tokenizer=tokenizer,
         test_loader=test_loader,
-        save_path=Path(config['save_dir'], 'evaluation_results.jsonl'),
+        save_path=Path('/data/bwyin/project/MultiviewLLM/evaluation_results', save_name),
         device=config['device'],
-        use_amp=(config.get('mixed_precision','no') in ['fp16','bf16']),
+        use_amp=None,
     )
 
 
 if __name__ == '__main__':
     from src.config.MultiviewLLM.Instruction.config import train_delinquency_config as config
 
-    # 使用match后的权重直接训练
-    # main(config)
+    match_only = Path('/data/bwyin/project/MultiviewLLM/checkpoint/MultiviewLLM/Instruction/Match/projector_match_12mo_fixed_final_step18068.pt')
+    sft_w_match = Path('/data/bwyin/project/MultiviewLLM/checkpoint/MultiviewLLM/Instruction/Delinquency_Prediction/projector_delinquency_prediction_12mo_fixed_m_final_step1076.pt')
+    sft_wo_match = Path('/data/bwyin/project/MultiviewLLM/checkpoint/MultiviewLLM/Instruction/Delinquency_Prediction/projector_delinquency_prediction_12mo_fixed_nm_final_step1076.pt')
+    config['batch_size'] = 256
 
-    # 使用fine-tune后的权重训练
-    config['load_checkpoint_path'] = Path('/data/bwyin/project/MultiviewLLM/checkpoint/MultiviewLLM/Instruction/Delinquency_Prediction/projector_final_step7515.pt')
-    config['batch_size'] = 512
-    main(config)
+    used_ckpt = 'match_only'  # options: 'match_only', 'sft_w_match', 'sft_wo_match'
+    remove_graph = True
+    remove_ts = False
+
+    used_ckpt_tag = {'match_only': match_only, 'sft_w_match': sft_w_match, 'sft_wo_match': sft_wo_match}
+    config['load_checkpoint_path'] = used_ckpt_tag[used_ckpt]
+
+    save_name = f'{used_ckpt}_12mo_fixed_evaluation_results_dg{remove_graph}_dt{remove_ts}.csv'
+    print(f"{used_ckpt}  |  dg:{remove_graph}  |  dt:{remove_ts}")
+    main(config, save_name, remove_graph=remove_graph, remove_ts=remove_ts)

@@ -44,6 +44,7 @@ class GenerateInstructDataset:
 
         # create template for different task modes
         self._create_prompt_template()
+        self._create_system_prompt()
 
         # preprocess transaction data
         self._preprocess_data()
@@ -63,48 +64,93 @@ class GenerateInstructDataset:
         Create prompt templates for different task modes.
         '''
         self.text_graph_prompt_template = (
-            "请根据以下用户信息和近期交易概览，判断该用户与图表征描述的用户是否为同一人。\n\n"
-            "{profile_prompt}\n"
-            "{recent_transaction_prompt}\n"
             "【图表征描述】:\n"
             "<G_PLACEHOLDER>\n\n"
-            "请直接从以下选项中选择一个最可能的答案：'匹配'，'不匹配'。"
+            "{profile_prompt}\n\n"
+            "{recent_transaction_prompt}\n"
         )
         self.text_ts_prompt_template = (
-            "请根据以下用户信息和近期交易概览，判断该用户与时间序列表征描述的用户是否为同一人。\n\n"
-            "{profile_prompt}\n"
-            "{recent_transaction_prompt}\n"
             "【时间序列表征描述】:\n"
             "<TS_PLACEHOLDER>\n\n"
-            "请直接从以下选项中选择一个最可能的答案：'匹配'，'不匹配'。"
+            "{profile_prompt}\n\n"
+            "{recent_transaction_prompt}\n"
         )
         self.graph_ts_prompt_template = (
-            "请根据以下图表征描述和时间序列表征，判断该两者是否为同一人。\n\n"
             "【图表征描述】:\n"
-            "<G_PLACEHOLDER>\n"
+            "<G_PLACEHOLDER>\n\n"
             "【时间序列表征描述】:\n"
-            "<TS_PLACEHOLDER>\n\n"
-            "请直接从以下选项中选择一个最可能的答案：'匹配'，'不匹配'。"
+            "<TS_PLACEHOLDER>\n"
         )
         self.text_graph_ts_prompt_template = (
-            "请根据以下用户信息和近期交易概览，判断该用户与图表征描述和时间序列表征描述的用户是否为同一人。\n\n"
-            "{profile_prompt}\n"
-            "{recent_transaction_prompt}\n"
             "【图表征描述】:\n"
-            "<G_PLACEHOLDER>\n"
+            "<G_PLACEHOLDER>\n\n"
             "【时间序列表征描述】:\n"
             "<TS_PLACEHOLDER>\n\n"
-            "请直接从以下选项中选择一个最可能的答案：'文本描述与两个表征均不匹配'，'图表征不匹配'，'时间序列表征不匹配'，'匹配'。"
+            "{profile_prompt}\n\n"
+            "{recent_transaction_prompt}\n"
         )
         self.delinquency_prediction_prompt_template = (
-            "请根据以下用户信息和近期交易概览，结合该用户的图表征描述和时间序列表征描述，判断该用户是否会在当前账单周期内发生信用卡违约。\n\n"
-            "{profile_prompt}\n"
-            "{recent_transaction_prompt}\n"
             "【图表征描述】:\n"
-            "<G_PLACEHOLDER>\n"
+            "<G_PLACEHOLDER>\n\n"
             "【时间序列表征描述】:\n"
             "<TS_PLACEHOLDER>\n\n"
-            "请直接从以下选项中选择一个最可能的答案：'正常'，'违约'。"
+            "{profile_prompt}\n\n"
+            "{recent_transaction_prompt}\n"
+        )
+
+    def _create_system_prompt(self):
+        self.text_graph_system_prompt = (
+            "角色：你是一名资深金融风控与多模态表征匹配专家，熟悉信用卡消费行为、文本表征与图表征的语义一致性评估。\n\n"
+            "任务：给定某用户某一时间段的信用卡消费“文本概览”与这些消费的“图表征”，"
+            "判断两者是否匹配（是否描述同一用户/同一消费集合）。仅依据提供的数据进行判断，不得臆测缺失值或引入外部信息。\n\n"
+            "输出：仅输出合法 JSON 对象（不包含 markdown 代码块或任何解释性文本），格式如下：\n"
+            "{\n"
+            '    "is_match": "true" 或 "false"\n'
+            "}\n"
+        )
+
+        self.text_ts_system_prompt = (
+            "角色：你是一名资深金融风控与多模态表征匹配专家，熟悉信用卡消费行为、文本表征与时间序列表征的语义一致性评估。\n\n"
+            "任务：给定某用户某一时间段的信用卡消费“文本概览”与这些消费的“时序表征”，"
+            "判断两者是否匹配（是否描述同一用户/同一消费集合）。仅依据提供的数据进行判断，不得臆测缺失值或引入外部信息。\n\n"
+            "输出：仅输出合法 JSON 对象（不包含 markdown 代码块或任何解释性文本），格式如下：\n"
+            "{\n"
+            '    "is_match": "true" 或 "false"\n'
+            "}\n"
+        )
+
+        self.graph_ts_system_prompt = (
+            "角色：你是一名资深金融风控与多模态表征匹配专家，熟悉信用卡消费行为、图表征与时间序列表征的一致性评估。\n\n"
+            "任务：给定某用户某一时间段消费的“图表征”与“时序表征”，"
+            "判断两者是否匹配（是否描述同一用户/同一消费集合）。仅依据提供的数据进行判断，不得臆测缺失值或引入外部信息。\n\n"
+            "输出：仅输出合法 JSON 对象（不包含 markdown 代码块或任何解释性文本），格式如下：\n"
+            "{\n"
+            '    "is_match": "true" 或 "false"\n'
+            "}\n"
+        )
+
+        self.text_graph_ts_system_prompt = (
+            "角色：你是一名资深金融风控与多模态表征匹配专家，熟悉信用卡消费行为在文本、图结构与时间序列三种表征间的一致性建模。\n\n"
+            "任务：给定某用户某一时间段的信用卡消费“文本概览”、“图表征”与"
+            "“时序表征”，判断三者之间的匹配关系。仅依据提供的数据进行判断，不得臆测缺失值或引入外部信息。\n\n"
+            "分类定义：\n"
+            " - “全部匹配”：三种表征均描述同一用户/同一消费集合；\n"
+            " - “图不匹配”：文本与时序匹配，但图不一致；\n"
+            " - “时序不匹配”：文本与图匹配，但时序不一致；\n"
+            " - “全部不匹配”：三者之间均不一致。\n\n"
+            "输出：仅输出合法 JSON 对象（不包含 markdown 代码块或任何解释性文本），格式如下：\n"
+            "{\n"
+            '    "match_type": "全部匹配" 或 "图不匹配" 或 "时序不匹配" 或 "全部不匹配"\n'
+            "}\n"
+        )
+
+        self.delinquency_prediction_system_prompt = (
+            "角色：你是资深金融风控建模专家，熟悉信用评分、逾期定义、卡账行为、稳定性检验。\n\n"
+            "任务：给定同一用户的“用户信息”、某一时间段的信用卡消费“文本概览”、“图表征”与“时序表征”，预测其在最新一个账单周期是否能按时还款。仅依据提供的数据进行判断，不得臆测缺失值或引入外部信息。\n\n"
+            "输出要求：仅输出合法 JSON 对象（不包含 markdown 代码块或任何解释性文本），格式如下：\n"
+            "{\n"
+            '    "is_delinquent": "true" 或 "false"\n'
+            "}\n"
         )
 
     def _preprocess_data(self):
@@ -302,12 +348,12 @@ class GenerateInstructDataset:
             positive_samples = self.sample_index.copy()
             positive_samples['graph_index'] = positive_samples['index']
             positive_samples['graph_sample_mode'] = 'anchor'
-            positive_samples['output'] = '匹配'
+            positive_samples['output'] = "true"
 
             # construct negative samples
             negative_samples = pd.concat([self.sample_index.copy() for _ in range(self.negative_ratio)], ignore_index=True)
             negative_samples = self.negative_sample(negative_samples, sample_mode_col='graph_sample_mode', sample_index_col='graph_index')
-            negative_samples['output'] = '不匹配'
+            negative_samples['output'] = "false"
 
             # combine positive and negative samples
             all_samples = pd.concat([positive_samples, negative_samples], ignore_index=True)
@@ -315,17 +361,18 @@ class GenerateInstructDataset:
 
             # construct prompt
             all_samples['prompt'] = all_samples.apply(self.construct_prompt, axis=1, args=(self.task_mode,))
+            all_samples['system_prompt'] = self.text_graph_system_prompt
         elif self.task_mode == 'Text-TimeSeries':
             # construct positive samples
             positive_samples = self.sample_index.copy()
             positive_samples['ts_index'] = positive_samples['index']
             positive_samples['ts_sample_mode'] = 'anchor'
-            positive_samples['output'] = '匹配'
+            positive_samples['output'] = "true"
 
             # construct negative samples
             negative_samples = pd.concat([self.sample_index.copy() for _ in range(self.negative_ratio)], ignore_index=True)
             negative_samples = self.negative_sample(negative_samples, sample_mode_col='ts_sample_mode', sample_index_col='ts_index')
-            negative_samples['output'] = '不匹配'
+            negative_samples['output'] = "false"
 
             # combine positive and negative samples
             all_samples = pd.concat([positive_samples, negative_samples], ignore_index=True)
@@ -333,6 +380,7 @@ class GenerateInstructDataset:
 
             # construct prompt
             all_samples['prompt'] = all_samples.apply(self.construct_prompt, axis=1, args=(self.task_mode,))
+            all_samples['system_prompt'] = self.text_ts_system_prompt
         elif self.task_mode == 'Graph-TimeSeries':
             # construct positive samples
             positive_samples = self.sample_index.copy()
@@ -340,7 +388,7 @@ class GenerateInstructDataset:
             positive_samples['ts_index'] = positive_samples['index']
             positive_samples['graph_sample_mode'] = 'anchor'
             positive_samples['ts_sample_mode'] = 'anchor'
-            positive_samples['output'] = '匹配'
+            positive_samples['output'] = "true"
             positive_samples['describe'] = '匹配'
 
             # construct negative samples
@@ -359,12 +407,12 @@ class GenerateInstructDataset:
                     group = self.negative_sample(group, sample_mode_col='graph_sample_mode', sample_index_col='graph_index')
                     group['ts_index'] = group['index']
                     group['ts_sample_mode'] = 'anchor'
-                    group['output'] = '不匹配'
+                    group['output'] = "false"
                 elif mode == '时间序列表征不匹配':
                     group = self.negative_sample(group, sample_mode_col='ts_sample_mode', sample_index_col='ts_index')
                     group['graph_index'] = group['index']
                     group['graph_sample_mode'] = 'anchor'
-                    group['output'] = '不匹配'
+                    group['output'] = "false"
                 temp.append(group)
             negative_samples = pd.concat(temp, ignore_index=True)
 
@@ -374,6 +422,7 @@ class GenerateInstructDataset:
 
             # construct prompt
             all_samples['prompt'] = all_samples.apply(self.construct_prompt, axis=1, args=(self.task_mode,))
+            all_samples['system_prompt'] = self.graph_ts_system_prompt
         elif self.task_mode == 'Text-Graph-TimeSeries':
             # construct positive samples
             positive_samples = self.sample_index.copy()
@@ -381,7 +430,7 @@ class GenerateInstructDataset:
             positive_samples['ts_index'] = positive_samples['index']
             positive_samples['graph_sample_mode'] = 'anchor'
             positive_samples['ts_sample_mode'] = 'anchor'
-            positive_samples['output'] = '匹配'
+            positive_samples['output'] = '全部匹配'
             positive_samples['describe'] = '匹配'
 
             # construct negative samples
@@ -400,17 +449,17 @@ class GenerateInstructDataset:
                 if mode == '文本描述与两个表征均不匹配':
                     group = self.negative_sample(group, sample_mode_col='graph_sample_mode', sample_index_col='graph_index')
                     group = self.negative_sample(group, sample_mode_col='ts_sample_mode', sample_index_col='ts_index')
-                    group['output'] = '文本描述与两个表征均不匹配'
+                    group['output'] = '全部不匹配'
                 elif mode == '图表征不匹配':
                     group = self.negative_sample(group, sample_mode_col='graph_sample_mode', sample_index_col='graph_index')
                     group['ts_index'] = group['index']
                     group['ts_sample_mode'] = 'anchor'
-                    group['output'] = '图表征不匹配'
+                    group['output'] = '图不匹配'
                 elif mode == '时间序列表征不匹配':
                     group = self.negative_sample(group, sample_mode_col='ts_sample_mode', sample_index_col='ts_index')
                     group['graph_index'] = group['index']
                     group['graph_sample_mode'] = 'anchor'
-                    group['output'] = '时间序列表征不匹配'
+                    group['output'] = '时序不匹配'
                 temp.append(group)
             negative_samples = pd.concat(temp, ignore_index=True)
 
@@ -420,14 +469,16 @@ class GenerateInstructDataset:
 
             # construct prompt
             all_samples['prompt'] = all_samples.apply(self.construct_prompt, axis=1, args=(self.task_mode,))
+            all_samples['system_prompt'] = self.text_graph_ts_system_prompt
         elif self.task_mode == 'Delinquency-Prediction':
             all_samples = self.sample_index.copy()
             all_samples['prompt'] = all_samples.apply(self.construct_prompt, axis=1, args=(self.task_mode,))
-            all_samples['output'] = all_samples['target_delinquency'].map({True: '违约', False: '正常'})
+            all_samples['output'] = all_samples['target_delinquency'].map({True: 'true', False: 'false'})
             all_samples['graph_index'] = all_samples['index']
             all_samples['ts_index'] = all_samples['index']
             all_samples['graph_sample_mode'] = 'anchor'
             all_samples['ts_sample_mode'] = 'anchor'
+            all_samples['system_prompt'] = self.delinquency_prediction_system_prompt
         else:
             raise ValueError(f"Unsupported task mode: {self.task_mode}")
 

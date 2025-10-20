@@ -2,10 +2,19 @@ import torch
 from torch.utils.data import DataLoader
 from src.dataset.MultiviewLLM.Instruction.dataset import InstructionDataset
 from src.model.MultiviewLLM.Instruction.projector import Projector
+from src.model.MultiviewLLM.Instruction.language_model import MultiviewLLM
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_scheduler
 import pandas as pd
 import pickle
 import numpy as np
+
+
+def print_mem(prefix=""):
+    print(f"\n[{prefix}]")
+    print(f"Allocated: {torch.cuda.memory_allocated() / 1024**2:.1f} MB")
+    print(f"Reserved : {torch.cuda.memory_reserved() / 1024**2:.1f} MB")
+    print(f"Max Allocated: {torch.cuda.max_memory_allocated() / 1024**2:.1f} MB")
+    print(f"Max Reserved : {torch.cuda.max_memory_reserved() / 1024**2:.1f} MB")
 
 
 def create_tokenizer(config):
@@ -63,6 +72,7 @@ def load_and_split_data(data_path_lis, task_mode, test_ratio):
         data['original_tag'] = data.index.astype(str) + f"_{tag}"
         data_lis.append(data)
     data = pd.concat(data_lis, ignore_index=True)
+    data = data.reset_index(drop=True)
 
     # process data
     if "graph_index" in data.columns:
@@ -87,7 +97,7 @@ def load_and_split_data(data_path_lis, task_mode, test_ratio):
         return train_data, test_data
 
 
-def create_dataloader(config, tokenizer):
+def create_dataloader(config, tokenizer, remove_graph=False, remove_ts=False):
     g_bank, g_pad, g_pad_index, ts_bank, ts_pad, ts_pad_index = load_graph_and_ts_embed(config)
 
     train_data, test_data = load_and_split_data(config['dataset_path_lis'],
@@ -111,7 +121,10 @@ def create_dataloader(config, tokenizer):
                                       g_pad_index=g_pad_index,
                                       ts_bank=ts_bank,
                                       ts_pad=ts_pad,
-                                      ts_pad_index=ts_pad_index)
+                                      ts_pad_index=ts_pad_index,
+                                      is_test=True,
+                                      remove_graph=remove_graph,
+                                      remove_ts=remove_ts)
     test_dataloader = DataLoader(test_dataset, batch_size=config['batch_size'],
                                  drop_last=False, pin_memory=True, shuffle=False,
                                  collate_fn=test_dataset.collate_fn)
@@ -123,10 +136,20 @@ def create_model_and_optimizer(config, tokenizer, dataloader):
         config['backbone'],
         cache_dir=config['backbone_cache_dir'],
         dtype=torch.bfloat16,
+        use_cache=False,
     )
     language_model.resize_token_embeddings(len(tokenizer))
     for param in language_model.parameters():
         param.requires_grad = False
+    # # if you want use gradient checkpointing, you must set model to train mode. If so, you should disable dropout
+    # for m in language_model.modules():
+    #     if isinstance(m, torch.nn.Dropout):
+    #         m.p = 0.0
+    # language_model.gradient_checkpointing_enable()
+    # # if you don't use gradient checkpointing, you can set model to eval mode
+    language_model.eval()
+    # language_model.config.use_cache = False
+    # language_model.enable_input_require_grads()
 
     config['llm_hidden_size'] = language_model.config.hidden_size
     projector = Projector(
@@ -142,19 +165,20 @@ def create_model_and_optimizer(config, tokenizer, dataloader):
         llm_embed=language_model.get_input_embeddings(),
     )
 
+    model = MultiviewLLM(language_model, projector)
+
+    param_groups = []
+    trainable_params = [p for p in model.projector.parameters() if p.requires_grad]
+    if len(trainable_params) > 0:
+        param_groups.append({"params": trainable_params, "lr": config['lr_projector'], "weight_decay": config['weight_decay']})
+
     # language_model = language_model.to(config['device'])  # if use accelerator, move later
     # projector = projector.to(config['device'])  # if use accelerator, move later
 
-    language_model.gradient_checkpointing_enable()
-    # language_model.enable_input_require_grads()
-
-    proj_params = [p for p in projector.parameters() if p.requires_grad]
-    llm_params = [p for p in language_model.parameters() if p.requires_grad]
-    param_groups = []
-    if len(proj_params) > 0:
-        param_groups.append({"params": proj_params, "lr": config['lr_projector'], "weight_decay": config['weight_decay']})
-    if len(llm_params) > 0:
-        param_groups.append({"params": llm_params, "lr": config['lr_llm'], "weight_decay": config['weight_decay']})
+    # proj_params = [p for p in projector.parameters() if p.requires_grad]
+    # param_groups = []
+    # if len(proj_params) > 0:
+    #     param_groups.append({"params": proj_params, "lr": config['lr_projector'], "weight_decay": config['weight_decay']})
 
     optimizer = torch.optim.AdamW(
         param_groups,
@@ -173,4 +197,4 @@ def create_model_and_optimizer(config, tokenizer, dataloader):
         num_warmup_steps=num_warmup_steps,
         num_training_steps=total_steps
     )
-    return projector, language_model, optimizer, scheduler
+    return model, optimizer, scheduler
