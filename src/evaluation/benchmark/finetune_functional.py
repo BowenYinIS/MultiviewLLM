@@ -17,6 +17,11 @@ from trl import SFTConfig, SFTTrainer
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 
+# ============================================================================
+# Utilities (decorators must be defined before use)
+# ============================================================================
+
+
 def timeit(func):
     """Decorator to time function execution and print results"""
 
@@ -32,29 +37,52 @@ def timeit(func):
     return wrapper
 
 
-def _count_tokens(tokenizer, text):
-    """Count tokens in text using the tokenizer"""
-    return len(tokenizer.encode(text))
+# ============================================================================
+# Main Pipeline
+# ============================================================================
 
 
-def _print_sample_info(
-    llm_name, sample_path, samples, max_transaction_tokens, max_tokens_seen, truncation_count, total_prompts
-):
-    """Print the prompt example with truncation statistics"""
-    print("=" * 60)
-    print(f"Building Prompts...({datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')})")
-    print("=" * 60)
-    print()
-    print(f"[USING LLM]: {llm_name}\n")
-    print(f"[USING SAMPLES]: {sample_path.stem} (N={len(samples)})\n")
-    print(f"[TOKEN LIMITS]:")
-    print(f"  - Max transaction tokens: {max_transaction_tokens:,}")
-    print(f"  - Max prompt tokens seen: {max_tokens_seen:,}")
+def finetune(config):
+    """Main finetuning pipeline"""
+    # Extract config values
+    llm_name = config["llm_name"]
+    sample_path = paths.processed_data_dir / config["sample_path"]
+    split = config["split"]
+    has_protected_attributes = config["has_protected_attributes"]
+    is_cot_prompt = config["is_cot_prompt"]
+    max_transaction_tokens = config["max_transaction_tokens"]
+    max_prompts = config["max_prompts"]
 
-    if truncation_count > 0:
-        print(f"\n⚠️  TRUNCATION: {truncation_count}/{total_prompts} prompts had transaction history truncated")
-    else:
-        print(f"\n✓ No truncation needed for {total_prompts} prompts\n\n")
+    # Initialize model and tokenizer
+    model, tokenizer = init_model(llm_name)
+
+    # Build dataset
+    dataset, prompts, samples = build_dataset(
+        tokenizer,
+        sample_path,
+        split,
+        max_prompts,
+        has_protected_attributes,
+        is_cot_prompt,
+        max_transaction_tokens,
+        llm_name,
+    )
+
+    # Initialize trainer
+    trainer = init_trainer(model, tokenizer, dataset)
+
+    # Start training
+    trainer_stats = trainer.train()
+
+    # save the checkpoint
+    model.save_pretrained_gguf(paths.checkpoint_dir / "benchmark/finetune", tokenizer)
+
+    return trainer_stats
+
+
+# ============================================================================
+# Pipeline Components
+# ============================================================================
 
 
 @timeit
@@ -130,8 +158,8 @@ def build_dataset(
         samples = samples[:max_prompts]
 
     # Load the prompt template
-    sys_msg_template = templates.get_purellm_sys_msg(is_cot_prompt)
-    user_msg_template = templates.get_purellm_user_msg(has_protected_attributes)
+    sys_msg_template = templates.get_naivellm_sys_msg(is_cot_prompt)
+    user_msg_template = templates.get_naivellm_user_msg(has_protected_attributes)
 
     # Build the prompts
     prompts = []
@@ -228,42 +256,39 @@ def init_trainer(model, tokenizer, dataset):
     return trainer
 
 
-def finetune(config):
-    """Main finetuning pipeline"""
-    # Extract config values
-    llm_name = config["llm_name"]
-    sample_path = paths.processed_data_dir / config["sample_path"]
-    split = config["split"]
-    has_protected_attributes = config["has_protected_attributes"]
-    is_cot_prompt = config["is_cot_prompt"]
-    max_transaction_tokens = config["max_transaction_tokens"]
-    max_prompts = config["max_prompts"]
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
-    # Initialize model and tokenizer
-    model, tokenizer = init_model(llm_name)
 
-    # Build dataset
-    dataset, prompts, samples = build_dataset(
-        tokenizer,
-        sample_path,
-        split,
-        max_prompts,
-        has_protected_attributes,
-        is_cot_prompt,
-        max_transaction_tokens,
-        llm_name,
-    )
+def _count_tokens(tokenizer, text):
+    """Count tokens in text using the tokenizer"""
+    return len(tokenizer.encode(text))
 
-    # Initialize trainer
-    trainer = init_trainer(model, tokenizer, dataset)
 
-    # Start training
-    trainer_stats = trainer.train()
+def _print_sample_info(
+    llm_name, sample_path, samples, max_transaction_tokens, max_tokens_seen, truncation_count, total_prompts
+):
+    """Print the prompt example with truncation statistics"""
+    print("=" * 60)
+    print(f"Building Prompts...({datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')})")
+    print("=" * 60)
+    print()
+    print(f"[USING LLM]: {llm_name}\n")
+    print(f"[USING SAMPLES]: {sample_path.stem} (N={len(samples)})\n")
+    print(f"[TOKEN LIMITS]:")
+    print(f"  - Max transaction tokens: {max_transaction_tokens:,}")
+    print(f"  - Max prompt tokens seen: {max_tokens_seen:,}")
 
-    # save the checkpoint
-    model.save_pretrained_gguf(paths.checkpoint_dir / "benchmark/finetune", tokenizer)
+    if truncation_count > 0:
+        print(f"\n⚠️  TRUNCATION: {truncation_count}/{total_prompts} prompts had transaction history truncated")
+    else:
+        print(f"\n✓ No truncation needed for {total_prompts} prompts\n\n")
 
-    return trainer_stats
+
+# ============================================================================
+# Entry Point
+# ============================================================================
 
 
 def main():

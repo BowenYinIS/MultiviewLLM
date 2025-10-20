@@ -2,17 +2,43 @@
 """
 Script to start llama.cpp server with various model configurations.
 
+The script automatically configures server parameters (np, ctx_size) based on 
+hostname and provides convenient access to multiple Qwen model variants.
+
 Usage:
-    # Generate shell script with all commands
+    # Generate shell script with all model commands
     python start_llamacpp.py
 
     # Run a specific model directly
-    python start_llamacpp.py instruct-30b
-    python start_llamacpp.py instruct-4b
-    python start_llamacpp.py thinking-30b
+    python start_llamacpp.py qwen3-instruct-30b
+    python start_llamacpp.py qwen3-instruct-4b
+    python start_llamacpp.py qwen3-instruct-4b-finetuned
+    python start_llamacpp.py qwen3-thinking-30b
+    python start_llamacpp.py qwen2.5-instruct-7b
+    python start_llamacpp.py qwen2-instruct-7b
 
-    # List available models
+    # List available models with configuration details
     python start_llamacpp.py --list
+
+    # Show help
+    python start_llamacpp.py --help
+
+Available Models:
+    - qwen3-instruct-30b: Qwen3 30B instruction model (Q4_K_XL, -hf)
+    - qwen3-instruct-4b: Qwen3 4B instruction model (Q4_K_XL, -hf)
+    - qwen3-instruct-4b-finetuned: Qwen3 4B finetuned model (Q8_0, -m local)
+    - qwen3-thinking-30b: Qwen3 30B thinking model (Q4_K_XL, -hf)
+    - qwen2.5-instruct-7b: Qwen2.5 7B instruction model (Q4_K_M, -hf)
+    - qwen2-instruct-7b: Qwen2 7B instruction model (Q4_K_M, -hf)
+
+Host Configuration:
+    The script requires hostname to be configured in HOST_CONFIGS with:
+    - np: Number of parallel slots
+    - ctx_size: Total context size
+    
+    Configured hosts:
+    - yu-lerner: np=8, ctx_size=262144
+    - hopper: np=16, ctx_size=524288
 """
 import os
 import socket
@@ -21,6 +47,7 @@ import sys
 from dataclasses import dataclass
 from typing import NamedTuple
 
+from src.config.paths import paths
 
 class HostConfig(NamedTuple):
     """Host-specific configuration for llama.cpp server."""
@@ -31,7 +58,7 @@ class HostConfig(NamedTuple):
 # Host-specific configurations
 HOST_CONFIGS = {
     "yu-lerner": HostConfig(np=8, ctx_size=262144),
-    "yu-hopper": HostConfig(np=16, ctx_size=524288),
+    "hopper": HostConfig(np=16, ctx_size=524288),
 }
 
 
@@ -59,10 +86,15 @@ def get_host_config() -> HostConfig:
 
 @dataclass
 class ModelConfig:
-    """Configuration for a llama.cpp model server."""
-    hf_model: str
+    """Configuration for a llama.cpp model server.
+    
+    Note: Either hf_model or model_path should be provided, not both.
+    If model_path is provided, it takes precedence and hf_model is ignored.
+    """
     ctx_size: int
     np: int
+    hf_model: str | None = None
+    model_path: str | None = None
     temp: float | None = None
     top_p: float | None = None
     min_p: float | None = None
@@ -84,7 +116,9 @@ class ModelConfig:
 
 
 # Explicit model settings - modify these to change model behavior
-# Note: temp, top_p, min_p, and top_k are optional - omit them to not include in command
+# Note: Use either 'hf_model' (-hf flag) or 'model_path' (-m flag) for model specification
+# If both are provided, 'model_path' takes precedence
+# temp, top_p, min_p, and top_k are optional - omit them to not include in command
 MODEL_SETTINGS = {
     "qwen3-instruct-30b": {
         "hf_model": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_XL",
@@ -102,6 +136,14 @@ MODEL_SETTINGS = {
         "top_k": 20,
         "presence_penalty": 1,
     },
+    "qwen3-instruct-4b-finetuned": {
+        "model_path": str(paths.checkpoint_dir / "benchmark/qwen3-4b-finetuned/gguf/qwen3-4b-instruct-2507-finetuned.Q8_0.gguf"),
+        "temp": 0.7,
+        "top_p": 0.80,
+        "min_p": 0.0,
+        "top_k": 20,
+        "presence_penalty": 1,
+    },
     "qwen3-thinking-30b": {
         "hf_model": "unsloth/Qwen3-30B-A3B-Thinking-2507-GGUF:Q4_K_XL",
         "temp": 0.6,
@@ -111,9 +153,16 @@ MODEL_SETTINGS = {
         "presence_penalty": 1,
     },
     "qwen2.5-instruct-7b": {
-        "hf_model": "Qwen/Qwen2.5-7B-Instruct-GGUF:Q6_K",
+        "hf_model": "Qwen/Qwen2.5-7B-Instruct-GGUF:Q4_K_M",
         "temp": 0.7,
         "top_p": 0.8,
+        "repetition_penalty": 1.05,
+    },
+    "qwen2-instruct-7b": {
+        "hf_model": "Qwen/Qwen2-7B-Instruct-GGUF:Q4_K_M",
+        "temp": 0.7,
+        "top_p": 0.8,
+        "top_k": 20,
         "repetition_penalty": 1.05,
     },
 }
@@ -131,9 +180,10 @@ def get_models() -> dict[str, ModelConfig]:
     models = {}
     for name, settings in MODEL_SETTINGS.items():
         models[name] = ModelConfig(
-            hf_model=settings["hf_model"],
             ctx_size=host_config.ctx_size,
             np=host_config.np,
+            hf_model=settings.get("hf_model"),
+            model_path=settings.get("model_path"),
             temp=settings.get("temp"),
             top_p=settings.get("top_p"),
             min_p=settings.get("min_p"),
@@ -146,10 +196,13 @@ def get_models() -> dict[str, ModelConfig]:
 
 def build_command(config: ModelConfig) -> list[str]:
     """Build the llama-server command from configuration."""
-    cmd = [
-        os.path.expanduser(config.llama_cpp_path),
-        "-hf", config.hf_model,
-    ]
+    cmd = [os.path.expanduser(config.llama_cpp_path)]
+    
+    # Add model specification (-m takes precedence over -hf)
+    if config.model_path:
+        cmd.extend(["-m", config.model_path])
+    elif config.hf_model:
+        cmd.extend(["-hf", config.hf_model])
     
     if config.jinja:
         cmd.append("--jinja")
@@ -205,9 +258,11 @@ def generate_shell_script():
     print(f"# Configuration: np={host_config.np}, ctx_size={host_config.ctx_size:,}")
     print("# This script contains all available llama.cpp server configurations")
     print()
-    print("# Choose model (-hf) from:")
+    print("# Choose model (-hf or -m) from:")
     for name, config in models.items():
-        print(f"# - {name}: {config.hf_model}")
+        model_spec = config.model_path if config.model_path else config.hf_model
+        model_type = "-m" if config.model_path else "-hf"
+        print(f"# - {name}: {model_type} {model_spec}")
     print()
     print("# Key settings:")
     print("# - --ctx-size: Total context divided by -np slots")
@@ -241,7 +296,10 @@ def run_model(model_name: str):
     env["CUDA_VISIBLE_DEVICES"] = str(config.gpu_id)
     
     print(f"Starting {model_name}...")
-    print(f"Model: {config.hf_model}")
+    if config.model_path:
+        print(f"Model path (-m): {config.model_path}")
+    elif config.hf_model:
+        print(f"HF model (-hf): {config.hf_model}")
     print(f"Port: {config.port}")
     print(f"Context size: {config.ctx_size}")
     print(f"Parallel slots: {config.np}")
@@ -272,7 +330,10 @@ def list_models():
     print()
     for name, config in models.items():
         print(f"  {name}")
-        print(f"    Model: {config.hf_model}")
+        if config.model_path:
+            print(f"    Model path (-m): {config.model_path}")
+        elif config.hf_model:
+            print(f"    HF model (-hf): {config.hf_model}")
         print(f"    Context: {config.ctx_size:,} tokens")
         print(f"    Slots: {config.np} (≈{config.ctx_size // config.np:,} tokens/slot)")
         print(f"    Port: {config.port}")
