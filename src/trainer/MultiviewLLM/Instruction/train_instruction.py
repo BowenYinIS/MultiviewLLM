@@ -88,7 +88,6 @@ def main(config):
             pbar = None
 
         for step, batch in enumerate(train_loader):
-            # batch = {k: v.to(config['device']) for k, v in batch.items() if k!='original_tags'}
             with accelerator.accumulate(model):
                 input_ids = batch['input_ids']
                 labels = batch["labels"]
@@ -99,8 +98,6 @@ def main(config):
                 graph_x_pad = batch['graph_x_pad']
                 ts_x = batch['ts_x']
                 ts_x_pad = batch['ts_x_pad']
-
-                # accelerator.print(f"input_ids shape: {input_ids.shape}")
 
                 output = model(
                     input_ids=input_ids,
@@ -115,32 +112,6 @@ def main(config):
                 )
                 loss = output.loss
 
-                # embeds = projector(
-                #     input_ids=input_ids,
-                #     is_graph=is_graph,
-                #     is_ts=is_ts,
-                #     graph_x=graph_x,
-                #     graph_x_pad=graph_x_pad,
-                #     ts_x=ts_x,
-                #     ts_x_pad=ts_x_pad,
-                # )
-
-                # output = language_model(
-                #     inputs_embeds=embeds,
-                #     attention_mask=attn_mask,
-                #     labels=labels,
-                #     use_cache=False,
-                # )
-                # loss = output.loss
-
-                # loss = language_model(
-                #     inputs_embeds=embeds,
-                #     attention_mask=attn_mask,
-                #     labels=labels,
-                #     use_cache=False,
-                # ).loss
-
-            # loss.backward()
                 accelerator.backward(loss)
 
                 if config['max_grad_norm'] is not None and config['max_grad_norm'] > 0:
@@ -164,12 +135,14 @@ def main(config):
         if accelerator.is_main_process and pbar is not None:
             pbar.close()
 
-        save_projector(accelerator, model, config['save_dir'], f"{config['model_save_name']}_epoch{epoch+1}_step{global_step}")
+        save_name = config['model_save_name'].format(graph_query_num=config['graph_query_num'], ts_query_num=config['ts_query_num'])+f"_epoch{epoch+1}_step{global_step}"
+        save_projector(accelerator, model, config['save_dir'], save_name)
 
         epoch_avg_loss = epoch_loss / len(train_loader)
         accelerator.print(f"[Epoch {epoch+1}] Average Loss: {epoch_avg_loss:.4f}")
 
-    save_projector(accelerator, model, config['save_dir'], f"{config['model_save_name']}_final_step{global_step}")
+    save_name = config['model_save_name'].format(graph_query_num=config['graph_query_num'], ts_query_num=config['ts_query_num'])+f"_final_step{global_step}"
+    save_projector(accelerator, model, config['save_dir'], save_name)
 
     accelerator.end_training()
 
@@ -179,11 +152,11 @@ if __name__ == "__main__":
     # accelerate launch /home/bwyin/project/Agent/MultiviewLLM/src/trainer/MultiviewLLM/Instruction/train_instruction.py
 
     # Define configurations
-    # from src.config.MultiviewLLM.Instruction.config import train_match_config as config
-    #
-    # main(config)
-
-    # Define configurations
-    from src.config.MultiviewLLM.Instruction.config import train_delinquency_config as config
+    from src.config.MultiviewLLM.Instruction.config import train_match_config as config
 
     main(config)
+
+    # Define configurations
+    # from src.config.MultiviewLLM.Instruction.config import train_delinquency_config as config
+    #
+    # main(config)

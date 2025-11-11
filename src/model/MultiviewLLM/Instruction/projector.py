@@ -110,7 +110,8 @@ class ProjectorLayer(nn.Module):
 class Projector(nn.Module):
     def __init__(self,
         llm_embed: Optional[nn.Embedding],
-        query_num: int = 8,
+        graph_query_num: int = 8,
+        ts_query_num: int = 16,
         graph_input_dim: int = 128,
         ts_input_dim: int = 128,
         hidden_dim: int = 256,
@@ -122,7 +123,7 @@ class Projector(nn.Module):
     ):
         super().__init__()
         self.graph_projector = ProjectorLayer(
-            query_num=query_num,
+            query_num=graph_query_num,
             input_dim=graph_input_dim,
             hidden_dim=hidden_dim,
             output_dim=output_dim,
@@ -132,7 +133,7 @@ class Projector(nn.Module):
             ffw_ratio=ffw_ratio,
         )
         self.ts_projector = ProjectorLayer(
-            query_num=query_num,
+            query_num=ts_query_num,
             input_dim=ts_input_dim,
             hidden_dim=hidden_dim,
             output_dim=output_dim,

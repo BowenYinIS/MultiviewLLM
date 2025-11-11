@@ -18,8 +18,8 @@ class InstructionDataset(Dataset):
         self.is_remove_ts = remove_ts
 
         # Expand placeholder tokens in prompt
-        self.g_expand_tokens = " ".join([f"<G_PLACEHOLDER {i}>" for i in range (1, 1 + self.config['query_num'])])
-        self.ts_expand_tokens = " ".join([f"<TS_PLACEHOLDER {i}>" for i in range (1, 1 + self.config['query_num'])])
+        self.g_expand_tokens = " ".join([f"<G_PLACEHOLDER {i}>" for i in range (1, 1 + self.config['graph_query_num'])])
+        self.ts_expand_tokens = " ".join([f"<TS_PLACEHOLDER {i}>" for i in range (1, 1 + self.config['ts_query_num'])])
 
         # Get placeholder token ids
         self.g_token_ids, self.ts_token_ids = self.get_placeholder_id()
@@ -59,13 +59,22 @@ class InstructionDataset(Dataset):
             {"role": "user", "content": prompt},
         ]
         if self.is_test:
+            # prompt_postfix = '\n【任务说明】：\n请严格以json格式输出结果，{"is_delinquent": boolean}，其中boolean取值为"true"或"false"。仅根据提供的信息预测，若有缺失请忽略。\n'
+            prompt_postfix = ''
+            instruction_messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt+prompt_postfix},
+            ]
             instruction_messages = self.tokenizer.apply_chat_template(instruction_messages,
                                                                          tokenize=False,
                                                                          add_generation_prompt=True)
 
             # response = json.dumps({'is_delinquent': response}, ensure_ascii=False, indent=4)
             # response = response.split(':')[0] + ': "'
-            response = '根据用户提供的信息以及只能回答"true"或"false"的指令，我预测该账户是否存在逾期风险的结果是'
+            # response = '根据用户提供的信息，以及预测结果必须是"true"和"false"中的一个，不能是nan。我的判断结果是{”is_delinquent":'
+            # response = ""
+            response = '根据提供的信息，我预测该账户是否存在逾期风险的结果是'
+            # response = '根据提供的信息，我预测该账户是否存在逾期风险的结果是：\n\n{\n    "is_delinquent": "'
             instruction_messages = instruction_messages + response
             full_ids = self.tokenizer(instruction_messages,
                                         return_tensors='pt',

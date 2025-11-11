@@ -35,7 +35,7 @@ train_match_config = {
 
     "entity": "bwyin-peking-university",  # for wandb
     "project": "MultiviewLLM_Match",  # for wandb
-    "run_name": "Match_Qwen2.5_7B_Instruct_12fixed",  # for wandb
+    "run_name": "Match_Q12_Qwen2.5_7B_Instruct_12fixed",  # for wandb
     "log_interval": 50,  # steps
 
     "dataset_path_lis": [('GT', Path(paths.processed_data_dir, 'MultiviewLLM', 'Instruction', 'samples_min12mo_fixed_2test_Graph-TimeSeries_dataset.feather')),
@@ -45,11 +45,12 @@ train_match_config = {
     "graph_embed_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'samples_min12mo_fixed_2test_node_embed.pt'),
     "ts_embed_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'TSEncoder', 'samples_min12mo_fixed_2test.npy'),
     "test_ratio": 0.2,
-    "padding_length": 700,  # max length for padding/truncating input sequences
-    "query_num": 4,
-    "placeholder_num": 10,  # number of placeholder tokens to add to the tokenizer and model embeddings
+    "padding_length": 750,  # max length for padding/truncating input sequences
+    "graph_query_num": 5,
+    "ts_query_num": 12,
+    "placeholder_num": 25,  # number of placeholder tokens to add to the tokenizer and model embeddings
     "save_dir": Path(paths.checkpoint_dir, 'MultiviewLLM', 'Instruction', 'Match'),
-    "model_save_name": "projector_match_12mo_fixed",
+    "model_save_name": "projector_g{graph_query_num}_t{ts_query_num}_match_12mo_fixed",
 
     "mixed_precision": "bf16",  # options: "no", "fp16", "bf16"
     "grad_accumulation_steps": 8,
@@ -92,9 +93,9 @@ train_delinquency_config = {
     "graph_embed_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'samples_min12mo_fixed_2test_node_embed.pt'),
     "ts_embed_path": Path(paths.processed_data_dir, 'MultiviewLLM', 'TSEncoder', 'samples_min12mo_fixed_2test.npy'),
     "test_ratio": 0.2,
-    "padding_length": 700,  # max length for padding/truncating input sequences
+    "padding_length": 750,  # max length for padding/truncating input sequences
     "query_num": 4,
-    "placeholder_num": 10,  # number of placeholder tokens to add to the tokenizer and model embeddings
+    "placeholder_num": 20,  # number of placeholder tokens to add to the tokenizer and model embeddings
     "save_dir": Path(paths.checkpoint_dir, 'MultiviewLLM', 'Instruction', 'Delinquency_Prediction'),
     "model_save_name": "projector_delinquency_prediction_12mo_fixed_nm",
 

@@ -18,5 +18,7 @@ sketch.ipynb
 *.ipynb
 *.pyc
 
+src/temp.py
+
 
 

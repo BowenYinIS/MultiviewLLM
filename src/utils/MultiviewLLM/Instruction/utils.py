@@ -153,7 +153,8 @@ def create_model_and_optimizer(config, tokenizer, dataloader):
 
     config['llm_hidden_size'] = language_model.config.hidden_size
     projector = Projector(
-        query_num=config['query_num'],
+        graph_query_num=config['graph_query_num'],
+        ts_query_num=config['ts_query_num'],
         graph_input_dim=config['graph_input_dim'],
         ts_input_dim=config['ts_input_dim'],
         hidden_dim=config['projector_hidden_dim'],
