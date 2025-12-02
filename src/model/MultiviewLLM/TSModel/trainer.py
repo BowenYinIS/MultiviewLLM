@@ -306,10 +306,10 @@ def main():
     
     # Data arguments
     parser.add_argument('--train_file', type=str, 
-                       default="data/processed_data/ts_processed_data/multivariate_timeseries_train.jsonl",
+                       default="data/processed_data/ts_processed_data/samples_min12mo_fixed_2test.jsonl",
                        help='Path to training data')
     parser.add_argument('--val_file', type=str,
-                       default="data/processed_data/ts_processed_data/multivariate_timeseries_test.jsonl",
+                       default="data/processed_data/ts_processed_data/samples_min12mo_fixed_2test.jsonl",
                        help='Path to validation data')
     parser.add_argument('--batch_size', type=int, default=512,
                        help='Batch size')

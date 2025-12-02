@@ -235,102 +235,87 @@ class TSDataReader:
         
         return all_mcc_desc_ts
     
-    def get_time_series_for_split(self, split):
+    def get_time_series_for_all_data(self):
         """
-        Get time series data for a specific split (train or test)
+        Get time series data for all data (no split)
         
-        Args:
-            split: 'train' or 'test'
-            
         Returns:
             Dictionary with row indices as keys and transactions as values
         """
-        # Filter for specified split
-        split_data = self.data[self.data['split'] == split]
-        split_indices = split_data.index.tolist()
+        all_indices = self.data.index.tolist()
         
-        split_time_series = {}
-        for idx in split_indices:
-            # Get transactions for this split row
+        all_time_series = {}
+        for idx in all_indices:
+            # Get transactions for this row
             transactions = self.get_transactions_for_row(idx)
             # Sort by txn_dte and txn_tme
             if not transactions.empty:
                 transactions = transactions.sort_values(['txn_dte', 'txn_tme'])
-            split_time_series[idx] = transactions
-        return split_time_series
+            all_time_series[idx] = transactions
+        return all_time_series
     
-    def get_multivariate_timeseries_for_split(self, split):
+    def get_multivariate_timeseries_for_all_data(self):
         """
-        Create multivariate time series for specified split
+        Create multivariate time series for all data
         
-        Args:
-            split: 'train' or 'test'
-            
         Returns:
             Dictionary with row indices as keys and multivariate time series as values
         """
-        split_time_series = self.get_time_series_for_split(split)
+        all_time_series = self.get_time_series_for_all_data()
         
-        split_multivariate_ts = {}
-        for row_idx, transactions in split_time_series.items():
+        all_multivariate_ts = {}
+        for row_idx, transactions in all_time_series.items():
             multivariate_ts = self.create_multivariate_timeseries(transactions)
-            split_multivariate_ts[row_idx] = multivariate_ts
+            all_multivariate_ts[row_idx] = multivariate_ts
         
-        return split_multivariate_ts
+        return all_multivariate_ts
     
-    def get_txn_des_timeseries_for_split(self, split):
+    def get_txn_des_timeseries_for_all_data(self):
         """
-        Create txn_des time series for specified split
+        Create txn_des time series for all data
         
-        Args:
-            split: 'train' or 'test'
-            
         Returns:
             Dictionary with row indices as keys and txn_des time series as values
         """
-        split_time_series = self.get_time_series_for_split(split)
+        all_time_series = self.get_time_series_for_all_data()
         
-        split_txn_des_ts = {}
-        for row_idx, transactions in split_time_series.items():
+        all_txn_des_ts = {}
+        for row_idx, transactions in all_time_series.items():
             txn_des_ts = self.create_txn_des_timeseries(transactions)
-            split_txn_des_ts[row_idx] = txn_des_ts
+            all_txn_des_ts[row_idx] = txn_des_ts
         
-        return split_txn_des_ts
+        return all_txn_des_ts
     
-    def get_mcc_desc_timeseries_for_split(self, split):
+    def get_mcc_desc_timeseries_for_all_data(self):
         """
-        Create mcc_desc time series for specified split
+        Create mcc_desc time series for all data
         
-        Args:
-            split: 'train' or 'test'
-            
         Returns:
             Dictionary with row indices as keys and mcc_desc time series as values
         """
-        split_time_series = self.get_time_series_for_split(split)
+        all_time_series = self.get_time_series_for_all_data()
         
-        split_mcc_desc_ts = {}
-        for row_idx, transactions in split_time_series.items():
+        all_mcc_desc_ts = {}
+        for row_idx, transactions in all_time_series.items():
             mcc_desc_ts = self.create_mcc_desc_timeseries(transactions)
-            split_mcc_desc_ts[row_idx] = mcc_desc_ts
+            all_mcc_desc_ts[row_idx] = mcc_desc_ts
         
-        return split_mcc_desc_ts
+        return all_mcc_desc_ts
     
-    def save_multivariate_timeseries_to_dataframe(self, output_dir='data/processed_data/ts_processed_data', split='train'):
+    def save_multivariate_timeseries_to_dataframe(self, output_dir='data/processed_data/ts_processed_data'):
         """
         Convert multivariate time series to DataFrame and save to files
         
         Args:
             output_dir: Directory to save the processed data
-            split: 'train' or 'test' to specify which data split to process
         """
         # Create output directory if it doesn't exist
         os.makedirs(output_dir, exist_ok=True)
         
-        # Get all multivariate time series, txn_des time series, and mcc_desc time series for specified split
-        all_multivariate_ts = self.get_multivariate_timeseries_for_split(split)
-        all_txn_des_ts = self.get_txn_des_timeseries_for_split(split)
-        all_mcc_desc_ts = self.get_mcc_desc_timeseries_for_split(split) 
+        # Get all multivariate time series, txn_des time series, and mcc_desc time series for all data
+        all_multivariate_ts = self.get_multivariate_timeseries_for_all_data()
+        all_txn_des_ts = self.get_txn_des_timeseries_for_all_data()
+        all_mcc_desc_ts = self.get_mcc_desc_timeseries_for_all_data() 
         
         # Convert to DataFrame format - each row is one account
         rows = []
@@ -349,18 +334,60 @@ class TSDataReader:
             txn_des_ts = all_txn_des_ts.get(row_idx, [])
             mcc_desc_ts = all_mcc_desc_ts.get(row_idx, [])
             
-            row_data = {
-                'act_idn_sky': original_row['act_idn_sky'],
+            # Start with all original columns from the data
+            row_data = original_row.to_dict()
+            
+            # Convert all numpy arrays and non-JSON serializable objects to JSON-serializable formats
+            for key, value in row_data.items():
+                # Special handling for billing_dates - convert to string list
+                if key == 'billing_dates':
+                    if isinstance(value, (list, tuple)):
+                        row_data[key] = [str(item) for item in value]
+                    elif isinstance(value, np.ndarray):
+                        row_data[key] = [str(item) for item in value.tolist()]
+                    else:
+                        row_data[key] = [str(value)]
+                elif isinstance(value, np.ndarray):
+                    row_data[key] = value.tolist()
+                elif isinstance(value, (np.bool_, bool)):
+                    row_data[key] = 1 if value else 0
+                elif isinstance(value, (np.integer, np.floating)):
+                    row_data[key] = value.item()
+                elif isinstance(value, np.datetime64):
+                    row_data[key] = str(value)
+                elif hasattr(value, 'tolist'):  # Other numpy types
+                    row_data[key] = value.tolist()
+                elif hasattr(value, 'date'):  # datetime objects
+                    row_data[key] = str(value)
+                elif hasattr(value, 'isoformat'):  # date objects
+                    row_data[key] = value.isoformat()
+                elif isinstance(value, (list, tuple)) and len(value) > 0:
+                    # Handle lists/tuples that might contain non-serializable objects
+                    try:
+                        json.dumps(value)  # Test if already serializable
+                    except (TypeError, ValueError):
+                        # Convert each item in the list
+                        converted_list = []
+                        for item in value:
+                            if hasattr(item, 'isoformat'):
+                                converted_list.append(item.isoformat())
+                            elif hasattr(item, 'date'):
+                                converted_list.append(str(item))
+                            else:
+                                converted_list.append(item)
+                        row_data[key] = converted_list
+            
+            # Add the time series data
+            row_data.update({
                 'time_series': multivariate_ts,  # Keep as dict, not JSON string
                 'txn_des_series': txn_des_ts,  # Separate txn_des time series
                 'mcc_desc_series': mcc_desc_ts,  # Separate mcc_desc time series
-                'target_delinquency': target_delinquency
-            }
+            })
             
             rows.append(row_data)
         
         # Save to JSONL file
-        output_file = os.path.join(output_dir, f'multivariate_timeseries_{split}.jsonl')
+        output_file = os.path.join(output_dir, 'samples_min12mo_fixed_2test.jsonl')
         
         with open(output_file, 'w', encoding='utf-8') as f:
             for row in rows:
@@ -374,7 +401,7 @@ class TSDataReader:
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Time Series Data Reader')
     parser.add_argument('--processed_data', type=str, 
-                       default='data/processed_data/sample_index/samples_min12mo_fixed_1test.feather',
+                       default='data/processed_data/sample_index/samples_min12mo_fixed_2test.feather',
                        help='Path to processed data feather file')
     parser.add_argument('--raw_data', type=str,
                        default='data/raw_data/sample_transaction.feather', 
@@ -387,17 +414,11 @@ if __name__ == '__main__':
     
     TSData = TSDataReader(args.processed_data, args.raw_data)
     
-    # TSData.data = TSData.data.sample(500, random_state=42).reset_index(drop=True)
+    # TSData.data = TSData.data.sample(50, random_state=42).reset_index(drop=True)
     print(f"Sampled data shape: {TSData.data.shape}")
     
-    # Save multivariate time series to DataFrame
+    # Save multivariate time series to DataFrame (all data, no split)
     df = TSData.save_multivariate_timeseries_to_dataframe(
-        output_dir=args.output_dir,
-        split='train'
-    )
-
-    df = TSData.save_multivariate_timeseries_to_dataframe(
-        output_dir=args.output_dir,
-        split='test'
+        output_dir=args.output_dir
     )
         
