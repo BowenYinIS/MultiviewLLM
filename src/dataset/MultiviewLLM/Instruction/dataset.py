@@ -64,6 +64,8 @@ class InstructionDataset(Dataset):
             instruction_messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt+prompt_postfix},
+                {"role": "assistant", "content": '根据提供的信息，我预测该账户是否存在逾期风险的结果是'+json.dumps({'is_delinquent': response}, ensure_ascii=False, indent=4)},
+                {"role": "user", "content": '你认为你回答的结果正确的可能性有多大？请回答0到100之间的整数百分比。'}
             ]
             instruction_messages = self.tokenizer.apply_chat_template(instruction_messages,
                                                                          tokenize=False,
@@ -72,8 +74,8 @@ class InstructionDataset(Dataset):
             # response = json.dumps({'is_delinquent': response}, ensure_ascii=False, indent=4)
             # response = response.split(':')[0] + ': "'
             # response = '根据用户提供的信息，以及预测结果必须是"true"和"false"中的一个，不能是nan。我的判断结果是{”is_delinquent":'
-            # response = ""
-            response = '根据提供的信息，我预测该账户是否存在逾期风险的结果是'
+            response = ""
+            # response = '根据提供的信息，我预测该账户是否存在逾期风险的结果是'
             # response = '根据提供的信息，我预测该账户是否存在逾期风险的结果是：\n\n{\n    "is_delinquent": "'
             instruction_messages = instruction_messages + response
             full_ids = self.tokenizer(instruction_messages,

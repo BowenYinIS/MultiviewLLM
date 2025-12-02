@@ -183,8 +183,8 @@ if __name__ == '__main__':
         ts_query_num = int(checkpoint_path.stem.split('_t')[1].split('_')[0])
         mode = 'match_only'
 
-        config['n_samples'] = 100
-        config['batch_size'] = 2
+        config['n_samples'] = 1
+        config['batch_size'] = 256
         config['graph_query_num'] = graph_query_num
         config['ts_query_num'] = ts_query_num
 
