@@ -8,7 +8,7 @@ import argparse
 
 class TransactionEmbedding(nn.Module):
     """MLP to transform 6 transaction variables into embeddings"""
-    
+    # TODO: categorical features as vocabulary embedding 
     def __init__(self, input_dim=6, hidden_dim=128, output_dim=256):
         super().__init__()
         self.mlp = nn.Sequential(
@@ -23,6 +23,36 @@ class TransactionEmbedding(nn.Module):
     
     def forward(self, x):
         return self.mlp(x)
+
+# New: per-feature one-hot projection to d_model, then summed
+class PerFeatureEmbedding(nn.Module):
+    """Project per-feature one-hot (or scalar) inputs to d_model and sum them."""
+    def __init__(self, d_model=256,
+                 mcc_classes=13, hod_classes=24, dow_classes=7, wom_classes=6, moy_classes=12):
+        super().__init__()
+        self.d_model = d_model
+        # Linear layers for categorical one-hot inputs
+        self.embed_mcc = nn.Linear(mcc_classes, d_model)
+        self.embed_hod = nn.Linear(hod_classes, d_model)
+        self.embed_dow = nn.Linear(dow_classes, d_model)
+        self.embed_wom = nn.Linear(wom_classes, d_model)
+        self.embed_moy = nn.Linear(moy_classes, d_model)
+        # Linear for amount scalar
+        self.embed_amt = nn.Linear(1, d_model)
+
+    def forward(self, mcc_onehot, hod_onehot, dow_onehot, wom_onehot, moy_onehot, amt_scalar):
+        # Inputs shapes: [seq_len, C] for onehots, amt_scalar: [seq_len, 1]
+        # Project each to [seq_len, d_model]
+        mch = self.embed_mcc(mcc_onehot)
+        h = self.embed_hod(hod_onehot)
+        d = self.embed_dow(dow_onehot)
+        w = self.embed_wom(wom_onehot)
+        mo = self.embed_moy(moy_onehot)
+        a = self.embed_amt(amt_scalar)
+
+        # Sum embeddings
+        emb = mch + h + d + w + mo + a
+        return emb
 
 class PositionalEncoding(nn.Module):
     """Positional encoding for transformer"""
@@ -50,11 +80,32 @@ class TimeSeriesTransformer(nn.Module):
                  num_layers=6,
                  dim_feedforward=512,
                  dropout=0.1,
-                 max_len=1000):
+                 max_len=2000,
+                 num_mcc=13,
+                 num_hod=24,
+                 num_dow=7,
+                 num_wom=6,
+                 num_moy=12):
         super().__init__()
         
         self.d_model = d_model
-        self.transaction_embedding = TransactionEmbedding(input_dim, d_model//2, d_model)
+        # store category sizes for one-hot encoding
+        self.num_mcc = num_mcc
+        self.num_hod = num_hod
+        self.num_dow = num_dow
+        self.num_wom = num_wom
+        self.num_moy = num_moy
+
+        # Use per-feature one-hot projection + sum into d_model
+        # For MCC we use 13 coarse classes (mcc_to_class), other categories use provided sizes
+        self.transaction_embedding = PerFeatureEmbedding(
+            d_model=d_model,
+            mcc_classes=13,
+            hod_classes=self.num_hod,
+            dow_classes=self.num_dow,
+            wom_classes=self.num_wom,
+            moy_classes=self.num_moy
+        )
         self.pos_encoding = PositionalEncoding(d_model, max_len)
         
         encoder_layer = nn.TransformerEncoderLayer(
@@ -99,35 +150,58 @@ class TimeSeriesTransformer(nn.Module):
             # Get sequence length
             seq_len = len(batch_data['mcc_cde'][i])
             
-            # Stack the 6 features: [mcc_cde, hod, dow, wom, moy, txn_amt]
-            features = torch.stack([
-                batch_data['mcc_cde'][i].float(),
-                batch_data['hod'][i].float(),
-                batch_data['dow'][i].float(),
-                batch_data['wom'][i].float(),
-                batch_data['moy'][i].float(),
-                batch_data['txn_amt'][i]
-            ], dim=1)  # Shape: [seq_len, 6]
-            
-            # Transform through MLP
-            embeddings = self.transaction_embedding(features)  # Shape: [seq_len, d_model]
+            # Build per-feature one-hot encodings and amount scalar
+            device = batch_data['mcc_cde'][i].device
+
+            # mcc: map raw codes to 13 coarse classes via mcc_to_class (masked -> -1)
+            mcc_codes = batch_data['mcc_cde'][i]
+            mcc_classes = [mcc_to_class(x.item()) for x in mcc_codes]
+            mcc_idx = torch.tensor([c if c >= 0 else 0 for c in mcc_classes], dtype=torch.long, device=device)
+            mcc_onehot = F.one_hot(mcc_idx, num_classes=13).float()
+            # zero-out masked positions (where class == -1)
+            mask_mcc_valid = torch.tensor([1.0 if c >= 0 else 0.0 for c in mcc_classes], dtype=mcc_onehot.dtype, device=device).unsqueeze(1)
+            mcc_onehot = mcc_onehot * mask_mcc_valid
+
+            # hod (0-23)
+            hod_idx = batch_data['hod'][i].long().clamp(min=0, max=self.num_hod - 1).to(device)
+            hod_onehot = F.one_hot(hod_idx, num_classes=self.num_hod).float()
+
+            # dow (0-6)
+            dow_idx = batch_data['dow'][i].long().clamp(min=0, max=self.num_dow - 1).to(device)
+            dow_onehot = F.one_hot(dow_idx, num_classes=self.num_dow).float()
+
+            # wom (usually 1-5) keep as provided (clamp)
+            wom_idx = batch_data['wom'][i].long().clamp(min=0, max=self.num_wom - 1).to(device)
+            wom_onehot = F.one_hot(wom_idx, num_classes=self.num_wom).float()
+
+            # moy (1-12) may be 1-based; clamp to range
+            moy_idx = batch_data['moy'][i].long().clamp(min=0, max=self.num_moy - 1).to(device)
+            moy_onehot = F.one_hot(moy_idx, num_classes=self.num_moy).float()
+
+            amt_col = batch_data['txn_amt'][i].unsqueeze(1).float().to(device)
+
+            # Project per-feature one-hots and amount and sum
+            embeddings = self.transaction_embedding(mcc_onehot, hod_onehot, dow_onehot, wom_onehot, moy_onehot, amt_col)
             batch_embeddings.append(embeddings)
         
         # Pad sequences to same length
-        max_len = max(emb.shape[0] for emb in batch_embeddings)
+        max_len = min(max(emb.shape[0] for emb in batch_embeddings), 2000)
         padded_embeddings = []
         attention_masks = []
         
         for emb in batch_embeddings:
             seq_len = emb.shape[0]
             # Pad with zeros
+            if seq_len > max_len:
+                emb = emb[:max_len, :]
             if seq_len < max_len:
-                padding = torch.zeros(max_len - seq_len, self.d_model).cuda()
+                # create padding on the same device as embeddings to avoid device mismatch
+                padding = torch.zeros(max_len - seq_len, self.d_model, device=emb.device)
                 padded_emb = torch.cat([emb, padding], dim=0)
-                mask = torch.cat([torch.ones(seq_len), torch.zeros(max_len - seq_len)])
+                mask = torch.cat([torch.ones(seq_len, device=emb.device), torch.zeros(max_len - seq_len, device=emb.device)])
             else:
                 padded_emb = emb
-                mask = torch.ones(max_len)
+                mask = torch.ones(max_len, device=emb.device)
             
             padded_embeddings.append(padded_emb)
             attention_masks.append(mask)
@@ -142,7 +216,8 @@ class TimeSeriesTransformer(nn.Module):
         x = x.transpose(0, 1)  # [batch_size, max_len, d_model]
         
         # Create attention mask for transformer (True means ignore)
-        attention_mask = (attention_mask == 0).bool().cuda()
+        # Ensure attention mask is on the same device as the model input
+        attention_mask = (attention_mask == 0).bool().to(x.device)
         
         # Transformer encoder
         token_embeddings = self.transformer_encoder(x, src_key_padding_mask=attention_mask)
@@ -246,7 +321,8 @@ def mcc_to_class(mcc_code):
     else:
         return 12  # Default to last class for unknown codes
 
-def create_model(d_model=256, nhead=8, num_layers=6, device='cuda'):
+def create_model(d_model=256, nhead=8, num_layers=6, device='cuda',
+                 num_mcc=13, num_hod=24, num_dow=7, num_wom=6, num_moy=12):
     """Create the time series transformer model"""
     model = TimeSeriesTransformer(
         input_dim=6,
@@ -254,9 +330,14 @@ def create_model(d_model=256, nhead=8, num_layers=6, device='cuda'):
         nhead=nhead,
         num_layers=num_layers,
         dim_feedforward=d_model*2,
-        dropout=0.1
+        dropout=0.1,
+        num_mcc=num_mcc,
+        num_hod=num_hod,
+        num_dow=num_dow,
+        num_wom=num_wom,
+        num_moy=num_moy
     )
-    
+
     # Move model to device
     model = model.to(device)
     return model

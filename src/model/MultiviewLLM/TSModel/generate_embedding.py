@@ -51,15 +51,14 @@ def prepare_batch_data(sample, device='cuda'):
 def compute_embeddings(model, data, device='cuda', batch_size=1):
     """Compute embeddings for all data samples"""
     model.eval()
-    embeddings = []
+    batch_embeddings = {}  # dict: key=row_index, value=embedding_matrix
     
     print("Computing embeddings...")
     with torch.no_grad():
         for i in tqdm(range(0, len(data), batch_size)):
             batch_samples = data[i:i+batch_size]
-            batch_embeddings = []
             
-            for sample in batch_samples:
+            for j, sample in enumerate(batch_samples):
                 # Prepare batch data for single sample
                 batch_data = prepare_batch_data(sample, device)
                 
@@ -72,19 +71,13 @@ def compute_embeddings(model, data, device='cuda', batch_size=1):
                 # Extract only the valid tokens (remove padding)
                 valid_embeddings = token_embeddings[0, :sequence_length, :]  # [seq_len, d_model]
                 
-                # Convert to numpy and store
-                batch_embeddings.append({
-                    'act_idn_sky': sample['act_idn_sky'],
-                    'embeddings': valid_embeddings.cpu().numpy(),
-                    'sequence_length': sequence_length,
-                    'target_delinquency': sample['target_delinquency']
-                })
-            
-            embeddings.extend(batch_embeddings)
+                # Store in dict format: key=row_index (行数), value=embedding_matrix
+                row_index = i + j  # 当前行在JSONL文件中的索引
+                batch_embeddings[row_index] = valid_embeddings.cpu().numpy()
     
-    return embeddings
+    return batch_embeddings
 
-def save_embeddings(embeddings, output_path):
+def save_embeddings(batch_embeddings, output_path):
     """Save embeddings to file"""
     print(f"Saving embeddings to {output_path}")
     
@@ -92,7 +85,7 @@ def save_embeddings(embeddings, output_path):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     # Save as numpy file
-    np.save(output_path, embeddings)
+    np.save(output_path, batch_embeddings)
     print(f"Embeddings saved successfully")
 
 def main():
@@ -102,9 +95,9 @@ def main():
     
     # Paths
     model_path = "/data/mjmao/credit/MultiviewLLM/src/model/MultiviewLLM/TSModel/model.py"
-    checkpoint_path = "/data/mjmao/credit/MultiviewLLM/checkpoint/MultiviewLLM/TSModel/checkpoint_best.pt"
-    data_path = "/data/mjmao/credit/MultiviewLLM/data/processed_data/ts_processed_data/multivariate_timeseries_train_435.jsonl"
-    output_path = "/data/mjmao/credit/MultiviewLLM/checkpoint/MultiviewLLM/TSModel/ts_embeddings.npy"
+    checkpoint_path = "checkpoint/MultiviewLLM/TSModel/contrastive/best_contrastive_checkpoint_samples_min12mo_fixed_2test.pt"
+    data_path = "/data/mjmao/credit/MultiviewLLM/data/processed_data/ts_processed_data/samples_min12mo_fixed_2test.jsonl"
+    output_path = "/data/mjmao/credit/MultiviewLLM/checkpoint/MultiviewLLM/TSModel/samples_min12mo_fixed_2test.npy"
     
     # Create model
     print("Creating model...")
@@ -116,15 +109,26 @@ def main():
     # Load data
     data = load_data(data_path)
     
-    # Compute embeddings
-    embeddings = compute_embeddings(model, data, device=device, batch_size=1)
+    # # Select specific rows to process
+    # selected_rows = [41837, 41838, 41839]  # 选择特定的行号
+    # print(f"Data length: {len(data)}")
+    # print(f"Selected rows: {selected_rows}")
+    
+    # # Filter data to only include selected rows
+    # filtered_data = [data[i] for i in selected_rows if i < len(data)]
+    # print(f"Filtered data length: {len(filtered_data)}")
+    
+    # Compute embeddings for filtered data
+    batch_embeddings = compute_embeddings(model, data, device=device, batch_size=1)
     
     # Save embeddings
-    save_embeddings(embeddings, output_path)
+    save_embeddings(batch_embeddings, output_path)
     
     print("Embedding generation completed!")
-    print(f"Generated embeddings for {len(embeddings)} samples")
-    print(f"Embedding shape for first sample: {embeddings[0]['embeddings'].shape}")
+    print(f"Generated embeddings for {len(batch_embeddings)} samples")
+    # Get first key and show embedding shape
+    first_key = list(batch_embeddings.keys())[0]
+    print(f"Embedding shape for row {first_key}: {batch_embeddings[first_key].shape}")
 
 if __name__ == "__main__":
     main()
