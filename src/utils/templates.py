@@ -11,7 +11,7 @@ class Templates:
     """
 
     def __init__(self):
-        # system message
+        # PromptCast
         self._promptcast_sys_msg_1 = self._strip_whitespace("""\
             角色：你是资深金融风控建模专家，熟悉信用评分、逾期定义、卡账行为、稳定性检验。
             
@@ -35,6 +35,25 @@ class Templates:
             }
         """)
 
+        self._promptcast_user_msg_1 = self._strip_whitespace("""\
+            【用户信息】：
+            - 居住地：南京
+            - 所属分支行为：{lvl_4_bch_nam}
+            - 居住情况：{residence}
+            - 行业：{industry}
+            - 学历：{education}
+        """)
+        self._promptcast_user_msg_2 = self._strip_whitespace("""\
+            - 出生年份：{birth_year}
+            - 性别：{sex}
+            - 婚姻状态：{marriage_status}
+        """)
+        self._promptcast_user_msg_3 = self._strip_whitespace("""\
+            【消费与历史违约情况】：
+            {transaction_history}
+        """)
+
+        # Agent
         self._agent_sys_msg_a1 = self._strip_whitespace("""\
             You are Agent A1 (Sequence Feature Synthesizer). 
             You role is to derive compact features from credit card transaction data without replacing human-readable evidence.
@@ -262,35 +281,17 @@ class Templates:
             }
         """)
 
-        # user message
-        self._promptcast_user_msg_1 = self._strip_whitespace("""\
-            【用户信息】：
-            - 居住地：南京
-            - 所属分支行为：{lvl_4_bch_nam}
-            - 居住情况：{residence}
-            - 行业：{industry}
-            - 学历：{education}
-        """)
-        self._promptcast_user_msg_2 = self._strip_whitespace("""\
-            - 出生年份：{birth_year}
-            - 性别：{sex}
-            - 婚姻状态：{marriage_status}
-        """)
-        self._promptcast_user_msg_3 = self._strip_whitespace("""\
-            【消费与历史违约情况】：
-            你过去的消费与违约情况如下：
-            {transaction_history}
-        """)
 
+        # FinPT
         self._finpt_user_msg_1 = self._strip_whitespace("""\
-            该信用卡用户信息如下：
+            【信用卡用户信息】：
             - 居住地：南京
             - 所属分支行为：{lvl_4_bch_nam}
             - 居住情况：{residence}
             - 行业：{industry}
             - 学历：{education}
 
-            该信用卡用户的消费与历史违约情况如下：
+            【信用卡用户的消费与历史违约情况】：
             {transaction_history}
         """)
 

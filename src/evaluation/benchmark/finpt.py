@@ -100,7 +100,7 @@ class FinPT:
             self.embeddings = torch.load(self.embedding_filepath)
 
         # train the classifier
-        # self.train_classifier()
+        self.train_classifier()
 
     def encode_inputs(self):
         """
@@ -431,9 +431,9 @@ def main():
 
     configs = [
         {
-            "transaction_text_type": "summary_2",  # detail_1, detail_2, summary_1, summary_2
+            "transaction_text_type": "finpt_summary_1",  # detail_1, detail_2, summary_1, summary_2
             "sample_path": "llm_benchmark/samples_min12mo_fixed_2test.feather",
-            "embeddings_filename": None,  # e.g., "embeds_finpt_20251204_130655", or None if you want to encode from scratch
+            "embeddings_filename": "embeds_finpt_20251204_131113",  # e.g., "embeds_finpt_20251204_130655", or None if you want to encode from scratch
         },
     ]
     for config in configs:
