@@ -121,6 +121,7 @@ class SampleIndexDataset:
             self.transaction
             # select relevant columns and remove duplicates
             .select(c.act_idn_sky, c.billing_date, c.bank_delinquency_label)
+            # ensure unique (act_idn_sky, billing_date) pairs
             .unique(["act_idn_sky", "billing_date"])
             .sort(c.act_idn_sky, c.billing_date)
             # partition into dict: {(act_idn_sky,): DataFrame(billing_date, bank_delinquency_label)}
@@ -158,6 +159,7 @@ class SampleIndexDataset:
                 sample = {"split": split, "act_idn_sky": act_idn_sky, "billing_dates": billing_date_window}
 
                 # get the delinquency status of the last cycle as the target delinquency label
+                sample["delinquency_history"] = delinquency_window
                 sample["target_delinquency"] = delinquency_window[-1]
 
                 # add the sample to the results

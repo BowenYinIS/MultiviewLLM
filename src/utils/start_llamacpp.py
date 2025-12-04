@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script to start llama.cpp server with various model configurations.
 
@@ -7,21 +6,29 @@ hostname and provides convenient access to multiple Qwen model variants.
 
 Usage:
     # Generate shell script with all model commands
-    python start_llamacpp.py
+    PYTHONPATH=../.. python start_llamacpp.py
 
     # Run a specific model directly
-    python start_llamacpp.py qwen3-instruct-30b
-    python start_llamacpp.py qwen3-instruct-4b
-    python start_llamacpp.py qwen3-instruct-4b-finetuned
-    python start_llamacpp.py qwen3-thinking-30b
-    python start_llamacpp.py qwen2.5-instruct-7b
-    python start_llamacpp.py qwen2-instruct-7b
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-instruct-30b
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-instruct-4b
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-instruct-4b-finetuned
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-thinking-30b
+    PYTHONPATH=../.. python start_llamacpp.py qwen2.5-instruct-7b
+    PYTHONPATH=../.. python start_llamacpp.py qwen2-instruct-7b
+
+    # Run with custom GPU ID
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-instruct-30b --gpu-id 1
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-instruct-4b -g 2
+
+    # Run with specific pooling method
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-instruct-30b --pooling cls
+    PYTHONPATH=../.. python start_llamacpp.py qwen3-instruct-4b -p mean
 
     # List available models with configuration details
-    python start_llamacpp.py --list
+    PYTHONPATH=../.. python start_llamacpp.py --list
 
     # Show help
-    python start_llamacpp.py --help
+    PYTHONPATH=../.. python start_llamacpp.py --help
 
 Available Models:
     - qwen3-instruct-30b: Qwen3 30B instruction model (Q4_K_XL, -hf)
@@ -30,6 +37,11 @@ Available Models:
     - qwen3-thinking-30b: Qwen3 30B thinking model (Q4_K_XL, -hf)
     - qwen2.5-instruct-7b: Qwen2.5 7B instruction model (Q4_K_M, -hf)
     - qwen2-instruct-7b: Qwen2 7B instruction model (Q4_K_M, -hf)
+
+Note on Embedding:
+    All models are started with --embedding enabled.
+    The pooling method can be configured in MODEL_SETTINGS (default: None).
+    Supported pooling methods: mean, cls, last, rank.
 
 Host Configuration:
     The script requires hostname to be configured in HOST_CONFIGS with:
@@ -40,6 +52,7 @@ Host Configuration:
     - yu-lerner: np=8, ctx_size=262144
     - hopper: np=16, ctx_size=524288
 """
+import argparse
 import os
 import socket
 import subprocess
@@ -113,12 +126,14 @@ class ModelConfig:
     ctv: str = "q8_0"
     host: str = "0.0.0.0"
     jinja: bool = True
+    pooling: str | None = None
 
 
 # Explicit model settings - modify these to change model behavior
 # Note: Use either 'hf_model' (-hf flag) or 'model_path' (-m flag) for model specification
 # If both are provided, 'model_path' takes precedence
 # temp, top_p, min_p, and top_k are optional - omit them to not include in command
+# pooling: optional, can be 'mean', 'cls', 'last', etc. (default: None)
 MODEL_SETTINGS = {
     "qwen3-instruct-30b": {
         "hf_model": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF:Q4_K_XL",
@@ -188,6 +203,7 @@ def get_models() -> dict[str, ModelConfig]:
             top_p=settings.get("top_p"),
             min_p=settings.get("min_p"),
             top_k=settings.get("top_k"),
+            pooling=settings.get("pooling"),
             port=settings.get("port", 8080),
         )
     
@@ -208,6 +224,7 @@ def build_command(config: ModelConfig) -> list[str]:
         cmd.append("--jinja")
     
     cmd.extend([
+        "--embedding",  # store the last-layer embedding of inputs
         "-ngl", str(config.ngl),
         "--threads", str(config.threads),
         "--ctx-size", str(config.ctx_size),
@@ -216,6 +233,9 @@ def build_command(config: ModelConfig) -> list[str]:
     if config.flash_attn:
         cmd.extend(["--flash-attn", "on"])
     
+    if config.pooling:
+        cmd.extend(["--pooling", config.pooling])
+
     cmd.extend([
         "-b", str(config.b),
         "-ub", str(config.ub),
@@ -279,8 +299,14 @@ def generate_shell_script():
         print()
 
 
-def run_model(model_name: str):
-    """Execute a specific model server."""
+def run_model(model_name: str, gpu_id: int | None = None, pooling: str | None = None):
+    """Execute a specific model server.
+    
+    Args:
+        model_name: Name of the model to run
+        gpu_id: Optional GPU ID to override the default (0)
+        pooling: Optional pooling method to override the default
+    """
     models = get_models()
     
     if model_name not in models:
@@ -289,6 +315,10 @@ def run_model(model_name: str):
         sys.exit(1)
     
     config = models[model_name]
+    if gpu_id is not None:
+        config.gpu_id = gpu_id
+    if pooling is not None:
+        config.pooling = pooling
     cmd = build_command(config)
     
     # Set environment variables
@@ -344,22 +374,43 @@ def list_models():
 
 def main():
     """Main entry point."""
-    if len(sys.argv) == 1:
+    parser = argparse.ArgumentParser(
+        description="Start llama.cpp server with various model configurations",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__
+    )
+    parser.add_argument(
+        "model",
+        nargs="?",
+        help="Model name to run (omit to generate shell script)"
+    )
+    parser.add_argument(
+        "--gpu-id", "-g",
+        type=int,
+        default=None,
+        help="GPU ID to use (default: 0)"
+    )
+    parser.add_argument(
+        "--list", "-l",
+        action="store_true",
+        help="List all available model configurations"
+    )
+    parser.add_argument(
+        "--pooling", "-p",
+        type=str,
+        default=None,
+        help="Pooling method (mean, cls, last, rank)"
+    )
+    
+    args = parser.parse_args()
+    
+    if args.list:
+        list_models()
+    elif args.model:
+        run_model(args.model, gpu_id=args.gpu_id, pooling=args.pooling)
+    else:
         # No arguments: generate shell script
         generate_shell_script()
-    elif len(sys.argv) == 2:
-        arg = sys.argv[1]
-        if arg in ["--list", "-l"]:
-            list_models()
-        elif arg in ["--help", "-h"]:
-            print(__doc__)
-        else:
-            # Run specific model
-            run_model(arg)
-    else:
-        print("Error: Too many arguments", file=sys.stderr)
-        print(__doc__, file=sys.stderr)
-        sys.exit(1)
 
 
 if __name__ == "__main__":

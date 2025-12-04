@@ -1,5 +1,12 @@
+# ----------------------------------
+# Impliment FinPT
+# - inputs: profile + transaction summary (12 cycles) + accumulated N delinquency
+# - Qwen2.5 as feature encoder
+# - add a MLP layer for classification
+# ----------------------------------
+
+
 import functools
-import json
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -8,6 +15,9 @@ from zoneinfo import ZoneInfo
 
 import polars as pl
 import tiktoken
+import torch
+import torch.nn as nn
+import torch.optim as optim
 from openai import OpenAI
 from polars import col as c
 from polars import lit
@@ -18,6 +28,7 @@ from tqdm import tqdm
 
 def timeit(func):
     """Decorator to time function execution and print results"""
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         start_time = time.time()
@@ -26,9 +37,11 @@ def timeit(func):
         elapsed_time = end_time - start_time
         print(f"✓ {func.__name__} completed in {elapsed_time:.2f} seconds")
         return result
+
     return wrapper
 
-class NaiveLLM:
+
+class FinPT:
     def __init__(self, config):
         """
         Initialize the inference pipeline with configuration
@@ -36,7 +49,7 @@ class NaiveLLM:
         # get configurations
         self.config = config
         self.max_prompts = config["max_prompts"]
-        
+
         # Determine max_workers based on hostname if not provided
         if "max_workers" in config:
             self.max_workers = config["max_workers"]
@@ -48,23 +61,30 @@ class NaiveLLM:
                 self.max_workers = 16
             else:
                 self.max_workers = 16  # default
-        
+
         self.sample_path = paths.processed_data_dir / config["sample_path"]
-        self.has_protected_attributes = config["has_protected_attributes"]
+
+        # set the embeddings filename, either from config or generate a new one
+        if config.get("embeddings_filename", None) is None:
+            self.embedding_filepath = (
+                self.sample_path.parent
+                / f"embeds_finpt_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y%m%d_%H%M%S')}.pt"
+            )
+        else:
+            self.embedding_filepath = (self.sample_path.parent / config["embeddings_filename"]).with_suffix(".pt")
+
+        # set the other configurations
         self.llm_name = config["llm_name"]
-        self.split = config["split"]
-        self.is_cot_prompt = config["is_cot_prompt"]
         self.max_transaction_tokens = config["max_transaction_tokens"]
         self.host = socket.gethostbyname(socket.gethostname())
-        self.use_transaction_summary = config["use_transaction_summary"]
+        self.transaction_text_type = config["transaction_text_type"]
 
         # Initialize tiktoken encoder for accurate token counting
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
 
-    def run_inference(self):
+    def run(self):
         """
-        Run LLM inference on the data with comprehensive error handling
-        Uses ThreadPoolExecutor to send concurrent requests to llama.cpp server
+        Run the FinPT pipeline
         """
         # build prompts
         self.build_prompts()
@@ -72,27 +92,97 @@ class NaiveLLM:
         # initialize the llm
         self.initialize_llm()
 
-        self.responses = []
+        # encode the inputs or load existing encoded inputs
+        if self.config.get("embeddings_filename", None) is None:
+            self.encode_inputs()
+        else:
+            print(f"Loading existing embeddings from {self.embedding_filepath.name}")
+            self.embeddings = torch.load(self.embedding_filepath)
+
+        # train the classifier
+        # self.train_classifier()
+
+    def encode_inputs(self):
+        """
+        Encode the inputs using the LLM
+        Uses ThreadPoolExecutor to send concurrent requests to llama.cpp server
+        """
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Submit all tasks
             future_to_idx = {
-                executor.submit(self.infer_single_sample, prompt): idx
-                for idx, prompt in enumerate(self.prompts)
+                executor.submit(self.infer_single_sample, prompt): idx for idx, prompt in enumerate(self.prompts)
             }
 
             # Collect results as they complete with progress bar
             with tqdm(total=len(self.prompts), desc="Inference Progress", unit="sample") as pbar:
                 # Store results with their original index to maintain order
-                results = [None] * len(self.prompts)
+                embeddings = [None] * len(self.prompts)
+                splits = [None] * len(self.prompts)
                 for future in as_completed(future_to_idx):
                     idx = future_to_idx[future]
                     response = future.result()  # Will raise exception if task failed
-                    results[idx] = response
+                    splits[idx] = response[0]
+                    embeddings[idx] = response[1]
                     pbar.update(1)
 
-                self.responses = results
+        self.embeddings = [{"split": split, "embedding": embedding} for split, embedding in zip(splits, embeddings)]
 
-        # save the results
+        # save the encoded inputs
+        torch.save(self.embeddings, self.embedding_filepath)
+
+    def train_classifier(self):
+        """
+        Train a small MLP classifier on the embeddings
+        """
+        print(f"Starting training classifier...")
+        
+        # load the embeddings
+        embeddings = torch.load(self.embedding_filepath)
+
+        # get the target labels
+        targets = torch.tensor(self.samples["target_delinquency"].to_list(), dtype=torch.float32).unsqueeze(1)
+
+        # define the model
+        input_dim = embeddings.shape[1]
+        output_dim = 1
+        model = nn.Sequential(nn.Linear(input_dim, output_dim))
+
+        # training configuration
+        criterion = nn.BCEWithLogitsLoss()
+        optimizer = optim.Adam(model.parameters(), lr=0.01)  # increased lr for simple linear model
+        epochs = 100
+        batch_size = 128
+
+        # create dataset and dataloader
+        dataset = torch.utils.data.TensorDataset(embeddings, targets)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+
+        # training loop
+        print(f"\nTraining Logistic Regression (Input: {input_dim} -> Output: {output_dim})...")
+        model.train()
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            for batch_embeddings, batch_targets in dataloader:
+                optimizer.zero_grad()
+                outputs = model(batch_embeddings)
+                loss = criterion(outputs, batch_targets)
+                loss.backward()
+                optimizer.step()
+                epoch_loss += loss.item()
+
+            if (epoch + 1) % 10 == 0:
+                print(f"Epoch {epoch + 1}/{epochs}, Loss: {epoch_loss / len(dataloader):.4f}")
+
+        print("Training completed.")
+
+        # generate the predictions and probabilities
+        model.eval()
+        with torch.no_grad():
+            logits = model(embeddings)
+            self.probs = torch.sigmoid(logits).numpy().flatten()
+            self.preds = (self.probs > 0.5)
+
+        # save the predictions
         self.save_predictions()
 
     @timeit
@@ -109,16 +199,12 @@ class NaiveLLM:
         # load the samples
         samples = pl.read_ipc(self.sample_path, memory_map=False)
 
-        # select the split
-        samples = samples.filter(c.split.is_in(self.split))
-
         # limit the number of samples
         if self.max_prompts:
-            samples = samples[:self.max_prompts]
+            samples = samples[: self.max_prompts]
 
         # load the prompt template
-        self.sys_msg_template = templates.get_naivellm_sys_msg(self.is_cot_prompt)
-        self.user_msg_template = templates.get_naivellm_user_msg(self.has_protected_attributes)
+        self.user_msg_template = templates.get_finpt_user_msg()
 
         # build the prompts
         prompts = []
@@ -126,15 +212,14 @@ class NaiveLLM:
         max_tokens_seen = 0
 
         for sample in samples.iter_rows(named=True):
-            # build the system message
-            sys_msg = self.sys_msg_template
+            split = sample["split"]
 
             # get transaction history
-            if self.use_transaction_summary:
-                transaction_history = sample["transaction_summary"]
+            if "summary" in self.transaction_text_type:
+                transaction_history = sample[f"transaction_text_{self.transaction_text_type}"]
             else:
                 transaction_history, was_truncated = self._truncate_transaction_history(
-                    sample["transaction_text"], max_tokens=self.max_transaction_tokens
+                    sample[f"transaction_text_{self.transaction_text_type}"], max_tokens=self.max_transaction_tokens
                 )
                 if was_truncated:
                     truncation_count += 1
@@ -152,12 +237,12 @@ class NaiveLLM:
             )
 
             # Track max tokens for reporting
-            prompt_tokens = self._count_tokens(sys_msg + user_msg)
+            prompt_tokens = self._count_tokens(user_msg)
             max_tokens_seen = max(max_tokens_seen, prompt_tokens)
 
             # assemble the final prompt
             prompt = {
-                "sys_msg": sys_msg,
+                "split": split,
                 "user_msg": user_msg,
             }
             prompts.append(prompt)
@@ -169,41 +254,67 @@ class NaiveLLM:
         # print one prompt for debugging
         self._print_prompt_example(prompt, truncation_count, len(prompts), max_tokens_seen)
 
-    @timeit
     def initialize_llm(self):
         """
         Initialize the language model based on configuration
         """
         self.llm = OpenAI(
             api_key="EMPTY",
-            base_url="http://localhost:8080/v1",
+            base_url="http://127.0.0.1:8080/v1",
         )
 
-        # Verify the model running on llama.cpp matches the configured model
-        self._verify_model_match()
+    def infer_single_sample(self, prompt):
+        """
+        Generate response for a single prompt using OpenAI SDK
 
-        if "qwen3" in self.llm_name.lower():
-            if "instruct" in self.llm_name.lower():
-                self.generation_params = {
-                    "model": self.llm_name,
-                    "temperature": 0.7,
-                    "top_p": 0.80,
-                    "presence_penalty": 1.0,
-                    "response_format": {"type": "json_object"},
-                }
-            elif "thinking" in self.llm_name.lower():
-                self.generation_params = {
-                    "model": self.llm_name,
-                    "temperature": 0.6,
-                    "top_p": 0.95,
-                    "presence_penalty": 1.0,
-                }
-        elif "qwen2" in self.llm_name.lower(): # including qwen2.5
-            self.generation_params = {
-                "model": self.llm_name,
-            }
-        else:
-            raise ValueError(f"Unsupported model: {self.llm_name}")
+        Args:
+            prompt (dict): Dictionary with 'system' and 'user' keys
+
+        Returns:
+            list: Embedding vector
+        """
+        # generate response
+        response = self.llm.embeddings.create(
+            input=prompt["user_msg"],
+            model=self.llm_name,
+        )
+
+        # get the embedding
+        embedding = torch.tensor(response.data[0].embedding)
+
+        return prompt["split"], embedding
+
+    def save_predictions(self):
+        """
+        Save the embeddings to a feather file
+        """
+        # convert the emb, prob, and preds to a dataframe
+        preds = pl.DataFrame({"pred_embed": self.embeddings.numpy(), "pred_prob": self.probs, "pred_is_delinquency": self.preds})
+
+        # ensure preds and prompt has same number of rows
+        if preds.height != len(self.prompts):
+            raise ValueError(f"Number of predictions ({preds.height}) is not equal to the number of prompts ({len(self.prompts)})")
+
+        # add prompt to the output table
+        prompt_df = pl.DataFrame(self.prompts)
+        preds = pl.concat([prompt_df, preds], how="horizontal")
+
+        # add sample to the output table
+        preds = pl.concat([self.samples, preds], how="horizontal").select(pl.all().exclude("^transaction_text.*$"))
+
+        # add config to the output table (use lit() to avoid column reference issues)
+        config_cols = {f"config_{key}": lit(value) for key, value in self.config.items() if key != "split"}
+        preds = preds.with_columns(**config_cols)
+
+        # save the preds table
+        save_path = (
+            self.sample_path.parent
+            / f"preds_finpt_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y%m%d_%H%M%S')}.feather"
+        )
+
+        preds.write_ipc(str(save_path), compression="lz4")
+        print("-" * 30)
+        print(f"Saved predictions to {save_path.name}\n\n\n")
 
     def _verify_model_match(self):
         """
@@ -231,80 +342,12 @@ class NaiveLLM:
                 raise
             raise ValueError(f"Failed to verify model on llama.cpp server: {e}")
 
-    def infer_single_sample(self, prompt):
-        """
-        Generate response for a single prompt using OpenAI SDK
-
-        Args:
-            prompt (dict): Dictionary with 'system' and 'user' keys
-
-        Returns:
-            dict: Parsed JSON response dict with reasoning (if available)
-        """
-        messages = [
-            {"role": "system", "content": prompt["sys_msg"]},
-            {"role": "user", "content": prompt["user_msg"]},
-        ]
-
-        # generate response and message
-        response = self.llm.chat.completions.create(
-            messages=messages, **self.generation_params
-        ).choices[0]
-        message = response.message
-
-        # Extract both reasoning and final answer
-        # For Thinking models: reasoning_content has the thinking process, content has final answer
-        # For Instruct models: only content is populated
-        prediction = message.content
-        reasoning_process = getattr(message, "reasoning_content", None)
-
-        # parse response into dict
-        try:
-            parsed_response = json.loads(prediction)
-        except json.JSONDecodeError:
-            parsed_response = {"is_delinquent_raw": prediction}
-        parsed_response["reasoning_process"] = reasoning_process
-
-        return parsed_response
-
-    def save_predictions(self):
-        """
-        Save the predictions to a feather file
-        """
-        # convert the responses to a dataframe
-        preds = pl.DataFrame(self.responses)
-        preds = preds.rename({col: f"pred_{col}" for col in preds.columns})
-
-        # add prompt to the output table
-        prompt_df = pl.DataFrame(self.prompts)
-        preds = pl.concat([prompt_df, preds], how="horizontal")
-
-        # add sample to the output table
-        preds = pl.concat([self.samples, preds], how="horizontal")
-
-        # add config to the output table (use lit() to avoid column reference issues)
-        config_cols = {
-            f"config_{key}": lit(value) for key, value in self.config.items() if key != "split"
-        }
-        preds = preds.with_columns(**config_cols)
-
-        # save the preds table
-        save_path = (
-            self.sample_path.parent
-            / f"preds_{datetime.now(ZoneInfo('America/New_York')).strftime('%Y%m%d_%H%M%S')}.feather"
-        )
-        preds.write_ipc(str(save_path), compression="lz4")
-        print("-" * 30)
-        print(f"Saved predictions to {save_path.name}\n\n\n")
-
     def _print_prompt_example(self, prompt, truncation_count, total_prompts, max_tokens_seen):
         """
         Print the prompt example with truncation statistics
         """
         print("=" * 60)
-        print(
-            f"Building Prompts...({datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')})"
-        )
+        print(f"Building Prompts...({datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M:%S')})")
         print("=" * 60)
         print()
         print(f"[USING LLM]: {self.llm_name}\n")
@@ -314,15 +357,10 @@ class NaiveLLM:
         print(f"  - Max prompt tokens seen: {max_tokens_seen:,}")
 
         if truncation_count > 0:
-            print(
-                f"\n⚠️  TRUNCATION: {truncation_count}/{total_prompts} prompts had transaction history truncated"
-            )
+            print(f"\n⚠️  TRUNCATION: {truncation_count}/{total_prompts} prompts had transaction history truncated")
         else:
             print(f"\n✓ No truncation needed for {total_prompts} prompts")
 
-        print()
-        print(f"[SYSTEM MESSAGE]:\n\n{self.sys_msg_template}")
-        print("-" * 60)
         print()
         print(f"[USER MESSAGE Example]:\n\n{'\n'.join(prompt['user_msg'].splitlines()[:15])}")
         print("...")
@@ -339,9 +377,7 @@ class NaiveLLM:
         """
         return len(self.tokenizer.encode(text))
 
-    def _truncate_transaction_history(
-        self, transaction_text: str, max_tokens: int
-    ) -> tuple[str, bool]:
+    def _truncate_transaction_history(self, transaction_text: str, max_tokens: int) -> tuple[str, bool]:
         """
         Truncate transaction history to fit within token limit.
         Keeps most recent transactions (end of text) since they're more relevant.
@@ -389,23 +425,15 @@ def main():
     # base inference configuration
     shared_config = {
         "max_prompts": None,
-        "split": ["test"],
         "llm_name": "qwen2.5-7b-instruct",
         "max_transaction_tokens": 28500,  # Maximum tokens for transaction history
     }
 
     configs = [
         {
-            "is_cot_prompt": False,
-            "has_protected_attributes": False,
-            "use_transaction_summary": True,
-            "sample_path": "llm_benchmark/samples_min6mo_fixed_2test.feather",
-        },
-        {
-            "is_cot_prompt": False,
-            "has_protected_attributes": False,
-            "use_transaction_summary": True,
+            "transaction_text_type": "summary_2",  # detail_1, detail_2, summary_1, summary_2
             "sample_path": "llm_benchmark/samples_min12mo_fixed_2test.feather",
+            "embeddings_filename": None,  # e.g., "embeds_finpt_20251204_130655", or None if you want to encode from scratch
         },
     ]
     for config in configs:
@@ -413,10 +441,10 @@ def main():
         config = shared_config | config
 
         # create inference pipeline
-        inference_pipeline = NaiveLLM(config)
+        inference_pipeline = FinPT(config)
 
         # run inference
-        inference_pipeline.run_inference()
+        inference_pipeline.run()
 
 
 if __name__ == "__main__":

@@ -12,20 +12,20 @@ class Templates:
 
     def __init__(self):
         # system message
-        self._naivellm_sys_msg_1 = self._strip_whitespace("""\
+        self._promptcast_sys_msg_1 = self._strip_whitespace("""\
             角色：你是资深金融风控建模专家，熟悉信用评分、逾期定义、卡账行为、稳定性检验。
             
             任务：基于给定用户的个人信息和信用卡历史数据，预测其在最新一个账单周期是否能按时还款。只使用提供的数据，不要臆测缺失值。
         """)
 
-        self._naivellm_sys_msg_2 = self._strip_whitespace("""\
+        self._promptcast_sys_msg_2 = self._strip_whitespace("""\
             请输出合法JSON格式（不包含 markdown code block），包含以下字段：
             {
                 "is_delinquent": boolean
             }
         """)
-        
-        self._naivellm_sys_msg_3 = self._strip_whitespace("""\
+
+        self._promptcast_sys_msg_3 = self._strip_whitespace("""\
             请输出合法JSON格式（不包含 markdown code block），包含以下字段:
             {
                 "reasoning_process": str,
@@ -35,8 +35,8 @@ class Templates:
             }
         """)
 
-        self._agent_sys_msg_a2 = self._strip_whitespace("""\
-            You are Agent A2 (Sequence Feature Synthesizer). 
+        self._agent_sys_msg_a1 = self._strip_whitespace("""\
+            You are Agent A1 (Sequence Feature Synthesizer). 
             You role is to derive compact features from credit card transaction data without replacing human-readable evidence.
 
             Rules:
@@ -72,10 +72,9 @@ class Templates:
                     }
                 },
                 "sequence_summaries": {
-                    "trend_balance_last3": "UP|DOWN|STABLE",
-                    "trend_balance_last6": "UP|DOWN|STABLE",
-                    "trend_spend_last3": "UP|DOWN|STABLE",
-                    "trend_cashadv_last6": "escalating|sporadic|none",
+                    "trend_balance_last12": "UP|DOWN|STABLE",
+                    "trend_spend_last12": "UP|DOWN|STABLE",
+                    "trend_cashadv_last12": "escalating|sporadic|none",
                     "recent_delinquency_bucket": "0-2|3-5|>=6|none",
                     "cash_advance_pattern": "escalating|sporadic|none"
                 },
@@ -87,12 +86,15 @@ class Templates:
             }
         """)
 
-        self._agent_sys_msg_a3 = self._strip_whitespace("""\
-            You are Agent A3 (Behavior Pattern Analyst). 
-            Your role is to read transactions directly and produce risk signals with textual evidence.
+        self._agent_sys_msg_a2 = self._strip_whitespace("""\
+            You are Agent A2 (Behavior Pattern Analyst). 
+            Your role is to read credit card transaction history and produce risk signals with textual evidence.
+
+            Inputs: 
+            - raw transaction history
+            - extracted transaction features (extracted by A1)
 
             Instructions:
-            - Inputs: A1 (normalized data) and A2 (features).
             - Evidence-first: cite concrete transactions by cycle and brief descriptors.
             - Output a list of risk signals with intensity in {-2,-1,0,+1,+2} where + = delinquency risk, - = protective.
             - Keep signals independent of demographics. Do NOT use user_profile fields as risk drivers.
@@ -137,16 +139,15 @@ class Templates:
             }
         """)
 
-        self._agent_sys_msg_a4 = self._strip_whitespace("""\
-            You are Agent A4 (Counterfactual Stress Tester): a counterfactual stress tester that examines the cardholder’s short-term payment fragility.
+        self._agent_sys_msg_a3 = self._strip_whitespace("""\
+            You are Agent A3 (Counterfactual Stress Tester): a counterfactual stress tester that examines the credit cardholder’s short-term payment fragility.
 
             Goal:
             Estimate how easily this user’s current-cycle payment status could tip toward delinquency under realistic near-future conditions.
 
             Inputs:
-            - Output of Agent A1: validated transaction and balance timeline
-            - Output of Agent A2: derived sequence features
-            - Output of Agent A3: behavioral risk and protective signals
+            - Output of Agent A1: derived transaction history features
+            - Output of Agent A2: behavioral risk and protective signals
 
             Constraints:
             - Use only internal information (no external data or tools).
@@ -188,8 +189,8 @@ class Templates:
             }
         """)
 
-        self._agent_sys_msg_a5 = self._strip_whitespace("""\
-            You are Agent A5 (Final Decision Agent): the final decision agent in a multi-agent delinquency prediction system. 
+        self._agent_sys_msg_a4 = self._strip_whitespace("""\
+            You are Agent A4 (Final Decision Agent): the final decision agent in a multi-agent delinquency prediction system. 
             Your task is to determine whether the cardholder will become delinquent in the current billing cycle.
 
             INPUTS:
@@ -242,7 +243,7 @@ class Templates:
 
             ---
 
-            OUTPUT in the following JSON example:
+            OUTPUT in the following JSON example. For `is_delinquent`, use "true" or "false". Do not include the "```json" and "```" tags):
             {
                 "current_cycle": "YYYY-MM",
                 "rationale": [
@@ -257,14 +258,12 @@ class Templates:
                     "A4": ["fragility: HighFragility", "CF2: Worsens"]
                 },
                 "probability_band": "VeryHigh|High|Medium|Low",
-                "prediction": "Delinquent|NotDelinquent|Unsure",
+                "is_delinquent": "true|false",
             }
         """)
-        
-
 
         # user message
-        self._naivellm_user_msg_1 = self._strip_whitespace("""\
+        self._promptcast_user_msg_1 = self._strip_whitespace("""\
             【用户信息】：
             - 居住地：南京
             - 所属分支行为：{lvl_4_bch_nam}
@@ -272,22 +271,49 @@ class Templates:
             - 行业：{industry}
             - 学历：{education}
         """)
-        self._naivellm_user_msg_2 = self._strip_whitespace("""\
+        self._promptcast_user_msg_2 = self._strip_whitespace("""\
             - 出生年份：{birth_year}
             - 性别：{sex}
             - 婚姻状态：{marriage_status}
         """)
-        self._naivellm_user_msg_3 = self._strip_whitespace("""\
+        self._promptcast_user_msg_3 = self._strip_whitespace("""\
             【消费与历史违约情况】：
             你过去的消费与违约情况如下：
             {transaction_history}
         """)
+
+        self._finpt_user_msg_1 = self._strip_whitespace("""\
+            该信用卡用户信息如下：
+            - 居住地：南京
+            - 所属分支行为：{lvl_4_bch_nam}
+            - 居住情况：{residence}
+            - 行业：{industry}
+            - 学历：{education}
+
+            该信用卡用户的消费与历史违约情况如下：
+            {transaction_history}
+        """)
+
+
+        self._agent_user_msg_a1 = self._strip_whitespace("""\
+            Your input is credit card transaction history, as follows:
+            {transaction_text}
+        """)
         self._agent_user_msg_a2 = self._strip_whitespace("""\
-            Your input is the output of Agent A1, as follows:
+            Your input is the transaction history and the output of Agent A1, as follows:
+            
+            [Transaction history]:
+            {transaction_text}
+
+            [Agent A1 output]:
             {agent_a1_output}
         """)
         self._agent_user_msg_a3 = self._strip_whitespace("""\
-            Your input is the output of Agent A1 and Agent A2, as follows:
+            Your input is the transaction history and the output of Agent A1, Agent A2, as follows:
+            
+            [Transaction history]:
+            {transaction_text}
+
             [Agent A1 output]:
             {agent_a1_output}
 
@@ -295,47 +321,62 @@ class Templates:
             {agent_a2_output}
         """)
         self._agent_user_msg_a4 = self._strip_whitespace("""\
-            Your input is the output of Agent A1, Agent A2, and Agent A3, as follows:
-            [Agent A1 output]:
-            {agent_a1_output}
-
-            [Agent A2 output]:
-            {agent_a2_output}
-    
-            [Agent A3 output]:
-            {agent_a3_output}
-        """)
-        self._agent_user_msg_a5 = self._strip_whitespace("""\
-            Make the final delinquency decision for the current billing cycle using outputs from A1–A4.
-            Inputs:
+            Your input is the user profile, transaction history and the output of Agent A1, Agent A2, Agent A3, as follows:
             
+            [Transaction history]:
+            {transaction_text}
+
+            [User profile]:
+            {user_profile}
+
             [Agent A1 output]:
             {agent_a1_output}
 
             [Agent A2 output]:
             {agent_a2_output}
-
+            
             [Agent A3 output]:
             {agent_a3_output}
-
-            [Agent A4 output]:
-            {agent_a4_output}
+            
         """)
 
     def _strip_whitespace(self, text: str):
         return textwrap.dedent(text).strip()
 
-    def get_naivellm_sys_msg(self, is_cot_prompt: bool):
+    def get_promptcast_sys_msg(self, is_cot_prompt: bool):
         if is_cot_prompt:
-            return f"{self._naivellm_sys_msg_1}\n\n{self._naivellm_sys_msg_3}"
+            return f"{self._promptcast_sys_msg_1}\n\n{self._promptcast_sys_msg_3}"
         if not is_cot_prompt:
-            return f"{self._naivellm_sys_msg_1}\n\n{self._naivellm_sys_msg_2}"
+            return f"{self._promptcast_sys_msg_1}\n\n{self._promptcast_sys_msg_2}"
 
-    def get_naivellm_user_msg(self, has_protected_attributes: bool):
+    def get_promptcast_user_msg(self, has_protected_attributes: bool):
         if has_protected_attributes:
-            return f"{self._naivellm_user_msg_1}\n{self._naivellm_user_msg_2}\n\n{self._naivellm_user_msg_3}"
+            return f"{self._promptcast_user_msg_1}\n{self._promptcast_user_msg_2}\n\n{self._promptcast_user_msg_3}"
         if not has_protected_attributes:
-            return f"{self._naivellm_user_msg_1}\n\n{self._naivellm_user_msg_3}"
+            return f"{self._promptcast_user_msg_1}\n\n{self._promptcast_user_msg_3}"
+
+    def get_finpt_user_msg(self):
+        return f"{self._finpt_user_msg_1}"
+
+    def get_agent_sys_msg(self, agent_name: str):
+        if agent_name == "a1":
+            return self._agent_sys_msg_a1
+        if agent_name == "a2":
+            return self._agent_sys_msg_a2
+        if agent_name == "a3":
+            return self._agent_sys_msg_a3
+        if agent_name == "a4":
+            return self._agent_sys_msg_a4
+
+    def get_agent_user_msg(self, agent_name: str, **kwargs):
+        if agent_name == "a1":
+            return self._agent_user_msg_a1.format(**kwargs)
+        if agent_name == "a2":
+            return self._agent_user_msg_a2.format(**kwargs)
+        if agent_name == "a3":
+            return self._agent_user_msg_a3.format(**kwargs)
+        if agent_name == "a4":
+            return self._agent_user_msg_a4.format(**kwargs)
 
 
 templates = Templates()
