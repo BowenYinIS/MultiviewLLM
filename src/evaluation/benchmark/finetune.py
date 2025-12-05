@@ -117,8 +117,8 @@ class Finetune:
             samples = samples[: self.max_prompts]
 
         # load the prompt template
-        self.sys_msg_template = templates.get_naivellm_sys_msg(self.is_cot_prompt)
-        self.user_msg_template = templates.get_naivellm_user_msg(self.has_protected_attributes)
+        self.sys_msg_template = templates.get_promptcast_sys_msg(self.is_cot_prompt)
+        self.user_msg_template = templates.get_promptcast_user_msg(self.has_protected_attributes)
 
         # build the prompts
         prompts = []

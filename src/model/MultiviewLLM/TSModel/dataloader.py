@@ -33,6 +33,8 @@ class MultiviewTimeSeriesDataset(Dataset):
         dow = torch.tensor(time_series['dow'], dtype=torch.long)
         wom = torch.tensor(time_series['wom'], dtype=torch.long)
         moy = torch.tensor(time_series['moy'], dtype=torch.long)
+        year = torch.tensor(time_series.get('year', [2012]*len(time_series['mcc_cde'])), dtype=torch.long)
+        billing_cycle_id = torch.tensor(time_series.get('billing_cycle_id', [-1]*len(time_series['mcc_cde'])), dtype=torch.long)
         
         # Apply log(1+x) transformation to transaction amounts
         raw_txn_amt = torch.tensor(time_series['txn_amt'], dtype=torch.float32)
@@ -51,11 +53,14 @@ class MultiviewTimeSeriesDataset(Dataset):
             'dow': dow,
             'wom': wom,
             'moy': moy,
+            'year': year,
+            'billing_cycle_id': billing_cycle_id,
             'txn_amt': txn_amt,
             'target': target,
             'act_idn_sky': record['act_idn_sky'],
-            'txn_des_series': record['txn_des_series'],
-            'mcc_desc_series': record['mcc_desc_series']
+            'txn_des_series': record.get('txn_des_series', []),
+            'mcc_desc_series': record.get('mcc_desc_series', []),
+            'index': record.get('index', idx)
         }
     
     def compute_amount_stats(self):
@@ -94,6 +99,8 @@ def custom_collate_fn(batch):
     dow = [item['dow'] for item in batch]
     wom = [item['wom'] for item in batch]
     moy = [item['moy'] for item in batch]
+    year = [item['year'] for item in batch]
+    billing_cycle_id = [item['billing_cycle_id'] for item in batch]
     txn_amt = [item['txn_amt'] for item in batch]
     targets = torch.stack([item['target'] for item in batch])
     
@@ -101,6 +108,7 @@ def custom_collate_fn(batch):
     act_ids = [item['act_idn_sky'] for item in batch]
     txn_des = [item['txn_des_series'] for item in batch]
     mcc_desc = [item['mcc_desc_series'] for item in batch]
+    indices = [item['index'] for item in batch]
     
     return {
         'mcc_cde': mcc_cde,
@@ -108,11 +116,14 @@ def custom_collate_fn(batch):
         'dow': dow,
         'wom': wom,
         'moy': moy,
+        'year': year,
+        'billing_cycle_id': billing_cycle_id,
         'txn_amt': txn_amt,
         'target': targets,
         'act_idn_sky': act_ids,
         'txn_des_series': txn_des,
-        'mcc_desc_series': mcc_desc
+        'mcc_desc_series': mcc_desc,
+        'index': indices
     }
 
 if __name__ == "__main__":
