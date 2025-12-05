@@ -68,7 +68,7 @@ def create_dataloader(config, tokenizer):
 
 
 def create_model_and_optimizer(config, tokenizer, dataloader):
-    # device = config['device']
+    device = config['device']
 
     # graph model
     mcc_embed = torch.load(config['graph_mcc_embed_path'])
@@ -95,9 +95,10 @@ def create_model_and_optimizer(config, tokenizer, dataloader):
         num_hod=config['ts_num_hod'],
         num_dow=config['ts_num_dow'],
         num_wom=config['ts_num_wom'],
-        num_moy=config['ts_num_moy']
+        num_moy=config['ts_num_moy'],
+        billing_cycle_ids=config['billing_cycle_num'],
     )
-    # ts_model.load_state_dict(torch.load(Path(paths.checkpoint_dir, 'MultiviewLLM', 'TSEncoder', 'samples_min12mo_fixed_2test_model.pth')))
+    ts_model.load_state_dict(torch.load(config['ts_checkpoint_path'])['model_state_dict'])
     # ts_model = ts_model.to(device)
 
     # llm backbone
@@ -124,20 +125,12 @@ def create_model_and_optimizer(config, tokenizer, dataloader):
     )
 
     model = MultiviewLLM(graph_model, ts_model, language_model, projector)
-    model = model.to(config['device'])
+    # model = model.to(config['device'])
 
     param_groups = []
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     if len(trainable_params) > 0:
-        param_groups.append({"params": trainable_params, "lr": config['lr_projector'], "weight_decay": config['weight_decay']})
-
-    # language_model = language_model.to(config['device'])  # if use accelerator, move later
-    # projector = projector.to(config['device'])  # if use accelerator, move later
-
-    # proj_params = [p for p in projector.parameters() if p.requires_grad]
-    # param_groups = []
-    # if len(proj_params) > 0:
-    #     param_groups.append({"params": proj_params, "lr": config['lr_projector'], "weight_decay": config['weight_decay']})
+        param_groups.append({"params": trainable_params, "lr": config['lr'], "weight_decay": config['weight_decay']})
 
     optimizer = torch.optim.AdamW(
         param_groups,

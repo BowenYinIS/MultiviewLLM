@@ -31,6 +31,10 @@ class InstructionDataset(Dataset):
         # Get placeholder token ids
         self.g_token_ids, self.ts_token_ids = self.get_placeholder_id()
 
+        # prepaer gt token ids
+        self.gt_tokens = ["true", "false"]
+        self.gt_token_ids = torch.tensor([self.tokenizer.encode(tok, add_special_tokens=False)[0] for tok in self.gt_tokens])
+
         # Get valid data index
         if self.is_test:
             self.valid_index = self.index_data[self.index_data['split'] == 'test']['index'].tolist()
@@ -138,8 +142,8 @@ class InstructionDataset(Dataset):
         transaction_prompt, transaction_number_lis = self.generate_transaction_prompt(act_idn_sky, billing_dates)
 
         # Construct response
-        response = self.index_data.loc[index, 'target_delinquency']
-        response = "true" if response else "false"
+        gt = self.index_data.loc[index, 'target_delinquency']
+        response = "true" if gt else "false"
         response = json.dumps({'target_delinquency': response}, ensure_ascii=False, indent=4)
 
         # messages
@@ -150,6 +154,16 @@ class InstructionDataset(Dataset):
         full_messages = input_messages + [
             {"role": "assistant", "content": response}
         ]
+        # In test mode, we only use input messages for generation
+        if self.is_test:
+            temp_message = self.tokenizer.apply_chat_template(input_messages,
+                                                              tokenize=False,
+                                                              add_generation_prompt=True)
+            # test_suffix = '根据提供的信息，我预测该账户是否存在逾期风险的结果是：\n\n{\n    "is_delinquent": "'
+            test_suffix = ''
+            full_messages = temp_message + test_suffix
+
+        # Tokenize
         input_ids = self.tokenizer.apply_chat_template(input_messages,
                                                        tokenize=True,
                                                        add_generation_prompt=True)
@@ -161,8 +175,11 @@ class InstructionDataset(Dataset):
                                                       max_length=self.config['padding_length'],
                                                       truncation=True)
         labels = full_ids.clone()
+
         labels[0, :len(input_ids)] = -100  # Mask instruction part in labels
         labels[0, labels[0] == self.tokenizer.pad_token_id] = -100  # Mask padding part in labels
+        if self.config['sft_mode_strict']:
+            labels[0, ~torch.isin(labels[0], self.gt_token_ids)] = -100  # Mask non-gt tokens in labels
 
         return {'input_ids': full_ids,
                 'graph_data': self.graph_data[index],
@@ -170,6 +187,7 @@ class InstructionDataset(Dataset):
                 'labels': labels,
                 'index': index,
                 'transaction_number_lis': transaction_number_lis,
+                'gt': gt,
                 }
 
     def txn_amt_transform(self, txn_amt):
@@ -184,6 +202,7 @@ class InstructionDataset(Dataset):
         graph_data = Batch.from_data_list([item['graph_data'] for item in batch])
         indexs = torch.tensor([item['index'] for item in batch], dtype=torch.long)
         transaction_number_lis = torch.tensor([item['transaction_number_lis'] for item in batch], dtype=torch.long)
+        gts = torch.tensor([item['gt'] for item in batch], dtype=torch.long)
 
         # ts data
         ts_data = [item['ts_data']['time_series'] for item in batch]
@@ -192,6 +211,7 @@ class InstructionDataset(Dataset):
         dow = [torch.tensor(ts['dow'], dtype=torch.long) for ts in ts_data]
         wom = [torch.tensor(ts['wom'], dtype=torch.long) for ts in ts_data]
         moy = [torch.tensor(ts['moy'], dtype=torch.long) for ts in ts_data]
+        billing_cycle_id = [torch.tensor(ts['billing_cycle_id'], dtype=torch.long) for ts in ts_data]
         txn_amt = [torch.tensor(ts['txn_amt'], dtype=torch.float32) for ts in ts_data]
         txn_amt = [self.txn_amt_transform(amt) for amt in txn_amt]
         ts_data = {
@@ -200,6 +220,7 @@ class InstructionDataset(Dataset):
             'dow': dow,
             'wom': wom,
             'moy': moy,
+            'billing_cycle_id': billing_cycle_id,
             'txn_amt': txn_amt,
         }
 
@@ -216,5 +237,6 @@ class InstructionDataset(Dataset):
                 'attn_mask': attn_mask,
                 'indexs': indexs,
                 'transaction_number_lis': transaction_number_lis,
+                'gts': gts,
                 }
 

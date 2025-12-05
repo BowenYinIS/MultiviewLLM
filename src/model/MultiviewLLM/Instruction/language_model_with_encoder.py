@@ -25,6 +25,18 @@ class MultiviewLLM(torch.nn.Module):
         return padded, mask
 
     def forward(self, data):
+        embeds, attn_mask, labels = self.forward_embeddings(data)
+
+        # Integrate projected embeddings into the language model
+        outputs = self.language_model(
+            inputs_embeds=embeds,
+            attention_mask=attn_mask,
+            labels=labels,
+            use_cache=False,
+        )
+        return outputs
+
+    def forward_embeddings(self, data):
         # Project multimodal embeddings
         input_ids = data['input_ids']
         labels = data['labels']
@@ -62,12 +74,4 @@ class MultiviewLLM(torch.nn.Module):
             ts_x_mask=ts_per_billing_cycle_mask,
             billing_cycle_num=billing_cycle_num,
         )
-
-        # Integrate projected embeddings into the language model
-        outputs = self.language_model(
-            inputs_embeds=embeds,
-            attention_mask=attn_mask,
-            labels=labels,
-            use_cache=False,
-        )
-        return outputs
+        return embeds, attn_mask, labels

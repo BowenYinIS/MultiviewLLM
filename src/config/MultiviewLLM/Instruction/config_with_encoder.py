@@ -38,7 +38,7 @@ train_config = {
     "entity": "bwyin-peking-university",  # for wandb
     "project": "MultiviewLLM_v2",  # for wandb
     "run_name": "V2_Qwen2.5_7B_Instruct_12fixed",  # for wandb
-    "log_interval": 50,  # steps
+    "log_interval": 10,  # steps
     "save_dir": Path(paths.checkpoint_dir, 'MultiviewLLM', 'Instruction', 'V2'),
     "model_save_name": "projector_g{graph_query_num}_t{ts_query_num}_match_12mo_fixed",
 
@@ -52,13 +52,15 @@ train_config = {
     'txn_amt_mean': 5.489291191101074,
     'txn_amt_std': 1.5969253778457642,
     "padding_length": 1000,  # max length for padding/truncating input sequences
+    "sft_mode_strict": True,  # whether to strictly train only on
 
     # Model settings
+    "billing_cycle_num": 12,
     ## LLM
     "backbone": "Qwen/Qwen2.5-7B-Instruct",
     "backbone_cache_dir": "/data/huggingface-cache/hub",
     "graph_query_num": 5,
-    "ts_query_num": 12,
+    "ts_query_num": 2,
     "placeholder_num": 25,  # number of placeholder tokens to add to the tokenizer and model embeddings
     "llm_hidden_size": 1280,  # will be updated after loading the model
     ## Graph
@@ -100,18 +102,16 @@ train_config = {
     # Training settings
     "batch_size": 8,
     "mixed_precision": "bf16",  # options: "no", "fp16", "bf16"
-    "grad_accumulation_steps": 8,
-    "num_epochs": 1,
-    "warmup_ratio": 0.03,
-    "lr_projector": 1e-4,
-    "lr_scheduler": "cosine",  # options: "linear", "cosine"
+    "lr": 1e-4,
     "weight_decay": 1e-2,
     "adam_beta1": 0.9,
     "adam_beta2": 0.95,
     "adam_eps": 1e-8,
+    "num_epochs": 1,
+    "grad_accumulation_steps": 8,
+    "warmup_ratio": 0.03,
+    "lr_scheduler": "cosine",  # options: "linear", "cosine"
     "max_grad_norm": 1.0,
-
-
 }
 
 train_match_config = {
