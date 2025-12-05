@@ -74,6 +74,15 @@ class EncoderLearner(torch.nn.Module):
         z2, g2 = self.encoder(x2, edge_index2, edge_weight2, batch)
         return z, g, z1, z2, g1, g2, semantic_embed
 
+    def forward_without_augment(self, x, edge_index, edge_attr, batch):
+        semantic_embed = self.semantic_embed(x.squeeze())
+        if not hasattr(self, 'lin_mcc'):
+            x = self.mcc_embed(x.squeeze())
+        else:
+            x = self.lin_mcc(semantic_embed)
+        z, g = self.encoder(x, edge_index, edge_attr, batch)
+        return z, g
+
     def project_graph(self, g):
         return self.graph_projector(g)
 
