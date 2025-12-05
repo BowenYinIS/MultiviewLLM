@@ -19,7 +19,7 @@ class TSDataReader:
             row_idx: Index of the row in self.data
             
         Returns:
-            DataFrame with filtered transactions
+            DataFrame with filtered transactions including billing_cycle_id
         """
         row = self.data.iloc[row_idx]
         act_idn_sky = row['act_idn_sky']
@@ -29,7 +29,14 @@ class TSDataReader:
         filtered_transactions = self.raw_data[
             (self.raw_data['act_idn_sky'] == act_idn_sky) & 
             (self.raw_data['billing_date'].isin(billing_dates))
-        ]
+        ].copy()
+        
+        # Add billing_cycle_id by mapping billing_date to its index in billing_dates list
+        if not filtered_transactions.empty:
+            # Create a mapping from billing_date to cycle_id (0-indexed)
+            billing_date_to_id = {date: idx for idx, date in enumerate(billing_dates)}
+            filtered_transactions['billing_cycle_id'] = filtered_transactions['billing_date'].map(billing_date_to_id)
+        
         return filtered_transactions
     
     def get_all_time_series(self):
@@ -69,6 +76,7 @@ class TSDataReader:
         - moy: Month of year
         - txn_amt: Transaction amount
         - txn_desc: Transaction description
+        - billing_cycle_id: ID of billing cycle (0-indexed)
         
         Args:
             transactions_df: DataFrame with transaction data
@@ -90,13 +98,14 @@ class TSDataReader:
         ts_data['datetime'] = pd.to_datetime(ts_data['txn_dte'].astype(str) + ' ' + ts_data['txn_tme'].astype(str))
         
         # Extract features
+        ts_data['year'] = ts_data['datetime'].dt.year  # Year
         ts_data['hod'] = ts_data['datetime'].dt.hour  # Hour of day
         ts_data['dow'] = ts_data['datetime'].dt.dayofweek  # Day of week (0=Monday)
         ts_data['wom'] = ((ts_data['datetime'].dt.day - 1) // 7) + 1  # Week of month
         ts_data['moy'] = ts_data['datetime'].dt.month  # Month of year
         
-        # Select the multivariate features
-        multivariate_features = ['mcc_cde', 'hod', 'dow', 'wom', 'moy', 'txn_amt', 'txn_desc']
+        # Select the multivariate features (including billing_cycle_id and year)
+        multivariate_features = ['mcc_cde', 'year', 'hod', 'dow', 'wom', 'moy', 'txn_amt', 'txn_desc', 'billing_cycle_id']
         
         # Check which columns exist in the data
         available_features = [col for col in multivariate_features if col in ts_data.columns]
@@ -109,9 +118,15 @@ class TSDataReader:
             # Handle None values in mcc_cde and convert to int
             if feature == 'mcc_cde':
                 values = [9999 if x is None else int(x) for x in values]
+            # Handle year - ensure it's int
+            elif feature == 'year':
+                values = [int(x) if pd.notna(x) else -1 for x in values]
             # Handle None values in txn_desc and convert to string
             elif feature == 'txn_desc':
                 values = ['UNKNOWN' if x is None else str(x) for x in values]
+            # Handle billing_cycle_id - ensure it's int
+            elif feature == 'billing_cycle_id':
+                values = [int(x) if pd.notna(x) else -1 for x in values]
             
             result[feature] = values
         
@@ -319,7 +334,7 @@ class TSDataReader:
         
         # Convert to DataFrame format - each row is one account
         rows = []
-        for row_idx, multivariate_ts in all_multivariate_ts.items():
+        for ordered_idx, (row_idx, multivariate_ts) in enumerate(all_multivariate_ts.items()):
             # Get the original row data
             original_row = self.data.iloc[row_idx]
             
@@ -337,17 +352,17 @@ class TSDataReader:
             # Start with all original columns from the data
             row_data = original_row.to_dict()
             
+            # Add the ordered index (0-indexed position in the output)
+            row_data['index'] = ordered_idx
+            
             # Convert all numpy arrays and non-JSON serializable objects to JSON-serializable formats
+            # Skip billing_dates - we only keep billing_cycle_id in time_series
+            keys_to_delete = [k for k in row_data.keys() if k == 'billing_dates']
+            for k in keys_to_delete:
+                del row_data[k]
+            
             for key, value in row_data.items():
-                # Special handling for billing_dates - convert to string list
-                if key == 'billing_dates':
-                    if isinstance(value, (list, tuple)):
-                        row_data[key] = [str(item) for item in value]
-                    elif isinstance(value, np.ndarray):
-                        row_data[key] = [str(item) for item in value.tolist()]
-                    else:
-                        row_data[key] = [str(value)]
-                elif isinstance(value, np.ndarray):
+                if isinstance(value, np.ndarray):
                     row_data[key] = value.tolist()
                 elif isinstance(value, (np.bool_, bool)):
                     row_data[key] = 1 if value else 0
@@ -387,7 +402,7 @@ class TSDataReader:
             rows.append(row_data)
         
         # Save to JSONL file
-        output_file = os.path.join(output_dir, 'samples_min12mo_fixed_2test.jsonl')
+        output_file = os.path.join(output_dir, 'samples_min12mo_fixed_2test_billingcycle.jsonl')
         
         with open(output_file, 'w', encoding='utf-8') as f:
             for row in rows:
@@ -414,7 +429,7 @@ if __name__ == '__main__':
     
     TSData = TSDataReader(args.processed_data, args.raw_data)
     
-    # TSData.data = TSData.data.sample(50, random_state=42).reset_index(drop=True)
+    # TSData.data = TSData.data.sample(5, random_state=42).reset_index(drop=True)
     print(f"Sampled data shape: {TSData.data.shape}")
     
     # Save multivariate time series to DataFrame (all data, no split)
