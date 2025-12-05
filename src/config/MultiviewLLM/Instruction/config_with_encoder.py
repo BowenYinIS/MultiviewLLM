@@ -47,7 +47,7 @@ train_config = {
                           'transaction': paths.sample_transaction,
                           'index': Path(paths.processed_data_dir, 'sample_index', 'samples_min12mo_fixed_2test.feather'),
                           'graph': Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'samples_min12mo_fixed_2test_graph.pt'),
-                          'ts': Path(paths.processed_data_dir, 'MultiviewLLM', 'TSEncoder', 'samples_min12mo_fixed_2test.jsonl'),},
+                          'ts': Path(paths.processed_data_dir, 'MultiviewLLM', 'TSEncoder', 'samples_min12mo_fixed_2test_billingcycle.jsonl'),},
     "keep_views": ['TS'],  # 'Graph', 'TS'
     'txn_amt_mean': 5.489291191101074,
     'txn_amt_std': 1.5969253778457642,
@@ -83,7 +83,7 @@ train_config = {
     "ts_num_dow": 7,
     "ts_num_wom": 6,
     "ts_num_moy": 12,
-    "ts_checkpoint_path": Path(paths.checkpoint_dir, 'MultiviewLLM', 'TSEncoder', 'samples_min12mo_fixed_2test_model.pth'),
+    "ts_checkpoint_path": Path(paths.checkpoint_dir, 'MultiviewLLM', 'TSEncoder', 'epoch_10.pt'),
     ## projector
     "projector_type": "MLP", # options: "MLP", "Attention"
     # view query num 在上方 LLM 设置中定义
