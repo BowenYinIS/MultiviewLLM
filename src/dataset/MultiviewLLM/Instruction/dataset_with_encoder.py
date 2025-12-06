@@ -32,7 +32,7 @@ class InstructionDataset(Dataset):
         self.g_token_ids, self.ts_token_ids = self.get_placeholder_id()
 
         # prepaer gt token ids
-        self.gt_tokens = ["true", "false"]
+        self.gt_tokens = [" true", " false"]
         self.gt_token_ids = torch.tensor([self.tokenizer.encode(tok, add_special_tokens=False)[0] for tok in self.gt_tokens])
 
         # Get valid data index
@@ -112,13 +112,13 @@ class InstructionDataset(Dataset):
                 temp += "（最新一个账单周期）"
             # 构造描述
             if ('Graph' in self.config['keep_views']) and ('TS' in self.config['keep_views']):
-                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.1f}元，共发生{txn_info['txn_number']}笔交易，图表征为<G_PLACEHOLDER>，时间序列表征为<TS_PLACEHOLDER>。\n"
+                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.0f}.0元，共发生{txn_info['txn_number']}笔交易，图表征为<G_PLACEHOLDER>，时间序列表征为<TS_PLACEHOLDER>，\n\n"
             elif 'Graph' in self.config['keep_views']:
-                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.1f}元，共发生{txn_info['txn_number']}笔交易，图表征为<G_PLACEHOLDER>。\n"
+                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.0f}.0元，共发生{txn_info['txn_number']}笔交易，图表征为<G_PLACEHOLDER>，\n\n"
             elif 'TS' in self.config['keep_views']:
-                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.1f}元，共发生{txn_info['txn_number']}笔交易，时间序列表征为<TS_PLACEHOLDER>。\n"
+                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.0f}.0元，共发生{txn_info['txn_number']}笔交易，时间序列表征为<TS_PLACEHOLDER>，\n\n"
             else:
-                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.1f}元，共发生{txn_info['txn_number']}笔交易。\n"
+                temp += f"在{date.year}年{date.month}月的账单周期，总支出金额为{txn_info['txn_amount']:.0f}.0元，共发生{txn_info['txn_number']}笔交易，\n\n"
             delinquency_lis.append(txn_info['bank_delinquency_label'])
             transaction_num_lis.append(txn_info['txn_number'])
         delinquency_sum_number = sum(delinquency_lis[:-1])  # Exclude the latest month
@@ -143,8 +143,7 @@ class InstructionDataset(Dataset):
 
         # Construct response
         gt = self.index_data.loc[index, 'target_delinquency']
-        response = "true" if gt else "false"
-        response = json.dumps({'target_delinquency': response}, ensure_ascii=False, indent=4)
+        response = json.dumps({'target_delinquency': bool(gt)}, ensure_ascii=False, indent=4)
 
         # messages
         input_messages = [
@@ -154,32 +153,39 @@ class InstructionDataset(Dataset):
         full_messages = input_messages + [
             {"role": "assistant", "content": response}
         ]
-        # In test mode, we only use input messages for generation
-        if self.is_test:
-            temp_message = self.tokenizer.apply_chat_template(input_messages,
-                                                              tokenize=False,
-                                                              add_generation_prompt=True)
-            # test_suffix = '根据提供的信息，我预测该账户是否存在逾期风险的结果是：\n\n{\n    "is_delinquent": "'
-            test_suffix = ''
-            full_messages = temp_message + test_suffix
 
         # Tokenize
         input_ids = self.tokenizer.apply_chat_template(input_messages,
                                                        tokenize=True,
                                                        add_generation_prompt=True)
-        full_ids = self.tokenizer.apply_chat_template(full_messages,
-                                                      tokenize=True,
-                                                      add_generation_prompt=False,
-                                                      return_tensors='pt',
-                                                      padding='max_length',
-                                                      max_length=self.config['padding_length'],
-                                                      truncation=True)
-        labels = full_ids.clone()
+        if not self.is_test:
+            full_ids = self.tokenizer.apply_chat_template(full_messages,
+                                                          tokenize=True,
+                                                          add_generation_prompt=False,
+                                                          return_tensors='pt',
+                                                          padding='max_length',
+                                                          max_length=self.config['padding_length'],
+                                                          truncation=True)
+        else:
+            input_prompt = self.tokenizer.apply_chat_template(input_messages,
+                                                              tokenize=False,
+                                                              add_generation_prompt=True)
+            test_suffix = ''
+            full_messages = input_prompt + test_suffix
+            full_ids = self.tokenizer(full_messages,
+                                      return_tensors='pt',
+                                      padding='max_length',
+                                      max_length=self.config['padding_length'],
+                                      truncation=True)['input_ids']
 
+        labels = full_ids.clone()
         labels[0, :len(input_ids)] = -100  # Mask instruction part in labels
         labels[0, labels[0] == self.tokenizer.pad_token_id] = -100  # Mask padding part in labels
         if self.config['sft_mode_strict']:
             labels[0, ~torch.isin(labels[0], self.gt_token_ids)] = -100  # Mask non-gt tokens in labels
+            # # 统计labels中非-100的数量，确保只有gt token
+            # if torch.sum(labels[0] != -100).item() != 1:
+            #     print(f"Warning: Sample index {index} has unexpected number of gt tokens in labels.")
 
         return {'input_ids': full_ids,
                 'graph_data': self.graph_data[index],

@@ -24,6 +24,8 @@ class MLPProjectorLayer(nn.Module):
             nn.GELU(),
             nn.Linear(output_dim, output_dim * query_num),
         )
+        self.ln = nn.LayerNorm(output_dim)
+        self.scale = nn.Parameter(torch.tensor(1.0))
 
     def forward(
         self,
@@ -44,6 +46,8 @@ class MLPProjectorLayer(nn.Module):
         # MLP映射
         out = self.mlp(x)  # (B, output_dim * query_num)
         out = out.view(x.size(0), self.query_num, self.output_dim)  # (B, query_num, output_dim)
+
+        out = self.ln(out) * self.scale
         return out
 
 
@@ -234,6 +238,10 @@ class Projector(nn.Module):
             )
 
             ts_embeds = ts_embeds.to(input_embeds.dtype)
+
+            # for debug: print ts_embeds mean and std, print input_embeds mean and std
+            # print("TS Embeds Mean:", ts_embeds.mean().item(), "Std:", ts_embeds.std().item())
+            # print("Input Embeds Mean:", input_embeds.mean().item(), "Std:", input_embeds.std().item())
 
             ts_embeds = ts_embeds.view(
                 B,

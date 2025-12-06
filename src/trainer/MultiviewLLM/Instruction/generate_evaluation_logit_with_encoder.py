@@ -30,15 +30,8 @@ class RestrictToBoolean(LogitsProcessor):
 def generate_on_loader_no_accel(config, model, tokenizer, test_loader, save_path: Path, use_amp=None, n_samples=1, gen_kwargs=None):
     # device
     device = config['device']
-
-    # 预先获取 4 个目标 token 的 id，并做单 token 断言
-    focal_tokens = ["true", "false", "True", "False"]
-    focal_token_ids = [tokenizer.encode(tok, add_special_tokens=False) for tok in focal_tokens]
-    for k, v in zip(focal_tokens, focal_token_ids):
-        assert len(v) == 1, f"'{k}' 不是单个 token，请改用与词表对齐的写法（如在前面加空格）或实现多 token 打分。"
-    focal_token_ids_map = {k: v[0] for k, v in zip(focal_tokens, focal_token_ids)}
-    focal_token_ids = torch.tensor([focal_token_ids_map[k] for k in focal_tokens], device=device)
-
+    # 精度
+    autocast_dtype = torch.bfloat16 if use_amp and torch.cuda.is_available() else None
     # 生成参数
     if gen_kwargs is None:
         gen_kwargs = dict(
@@ -46,19 +39,19 @@ def generate_on_loader_no_accel(config, model, tokenizer, test_loader, save_path
             do_sample=True,
             temperature=0.7,
             top_p=0.8,
-            # repetition_penalty=1.05,
+            repetition_penalty=1.05,
             use_cache=True,
             eos_token_id=tokenizer.eos_token_id,
             pad_token_id=(tokenizer.pad_token_id
                           if tokenizer.pad_token_id is not None
                           else tokenizer.eos_token_id),
         )
+    # 预先获取目标token的 id，并做单token断言
+    focal_tokens = [" true", " false"]
+    focal_token_ids = torch.tensor([tokenizer.encode(tok, add_special_tokens=False)[0] for tok in focal_tokens], device=device)
+
 
     rows = []
-    rows_token = []
-
-    autocast_dtype = torch.bfloat16 if use_amp and torch.cuda.is_available() else None
-
     for batch in tqdm(test_loader, desc="[Eval] Generating"):
         # basic info
         indexs = batch.get("indexs", None)
@@ -90,30 +83,25 @@ def generate_on_loader_no_accel(config, model, tokenizer, test_loader, save_path
 
         # 4) 解码
         seqs = outputs.sequences  # [B*n_samples, seq_len]
-        texts = tokenizer.batch_decode(seqs, skip_special_tokens=True)
-
-        # 5) 组装输出 + 命中 token 分数
-        logits_sel = torch.stack([scores_t[:, focal_token_ids] for scores_t in outputs.logits], dim=1)
+        texts = tokenizer.batch_decode(seqs, skip_special_tokens=True)  # list of str, len B*n_samples
+        logits_sel = torch.stack([scores_t[:, focal_token_ids] for scores_t in outputs.logits], dim=1)  # [B*n_samples, seq_len, 2]
         logprobs_sel = torch.stack(
             [F.log_softmax(scores_t.float(), dim=-1)[:, focal_token_ids] for scores_t in outputs.logits],
             dim=1
-        )
+        )  # [B*n_samples, seq_len, 2]
+
+        # 5) 组装输出
         for b in range(len(indexs)):
             tag = indexs[b]
-            gt = gts[b] if labels is not None else None
+            gt = gts[b]
             for s in range(n_samples):
                 idx = b * n_samples + s  # 当前序号
 
                 # 获取该样本本次采样的完整生成序列和对应的 scores
                 gen_tokens = seqs[idx]
 
-                # 命中位置：生成出来的是四个特殊 token 之一
-                hits_mask = (
-                        (gen_tokens == focal_token_ids[0]) |
-                        (gen_tokens == focal_token_ids[1]) |
-                        (gen_tokens == focal_token_ids[2]) |
-                        (gen_tokens == focal_token_ids[3])
-                )
+                # 命中位置：生成出来的是特殊 token 之一
+                hits_mask = torch.isin(gen_tokens, focal_token_ids)  # shape [seq_len], bool
                 hit_steps = hits_mask.nonzero(as_tuple=False).squeeze(-1).tolist()  # e.g., [3, 7]
 
                 hit_info = []
@@ -127,15 +115,10 @@ def generate_on_loader_no_accel(config, model, tokenizer, test_loader, save_path
                         "step_idx": t,
                         "picked_token_id": picked_id,
                         "picked_token_str": picked_str,
-                        "true_logit": float(logits_sel[idx, t, 0].item()),
-                        "true_logprob": float(logprobs_sel[idx, t, 0].item()),
-                        "false_logit": float(logits_sel[idx, t, 1].item()),
-                        "false_logprob": float(logprobs_sel[idx, t, 1].item()),
-                        "True_logit": float(logits_sel[idx, t, 2].item()),
-                        "True_logprob": float(logprobs_sel[idx, t, 2].item()),
-                        "False_logit": float(logits_sel[idx, t, 3].item()),
-                        "False_logprob": float(logprobs_sel[idx, t, 3].item()),
                     }
+                    for i, tok in enumerate(focal_tokens):
+                        row[f"logit_{tok.strip()}"] = logits_sel[idx, t, i].item()
+                        row[f"logprob_{tok.strip()}"] = logprobs_sel[idx, t, i].item()
                     hit_info.append(row)
 
                 # === 记录整体输出 ===
@@ -159,10 +142,12 @@ if __name__ == '__main__':
     from src.config.paths import paths
     from src.config.MultiviewLLM.Instruction.config_with_encoder import train_config as config
 
+    exp_id = 2
     for checkpoint_path in Path(paths.checkpoint_dir, 'MultiviewLLM', 'Instruction', 'V2').glob('*_final_*.pt'):
-        if 'g5_t2_' not in checkpoint_path.stem:
+        if f'exp{exp_id}' not in checkpoint_path.stem:
             continue
 
+        # update config
         graph_query_num = int(checkpoint_path.stem.split('_g')[1].split('_')[0])
         ts_query_num = int(checkpoint_path.stem.split('_t')[1].split('_')[0])
         config['n_samples'] = 1

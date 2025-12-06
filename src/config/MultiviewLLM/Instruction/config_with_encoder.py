@@ -35,12 +35,13 @@ train_config = {
     "seed": 42,
 
     # Logging settings
+    "exp_id": 4,
     "entity": "bwyin-peking-university",  # for wandb
     "project": "MultiviewLLM_v2",  # for wandb
-    "run_name": "V2_Qwen2.5_7B_Instruct_12fixed",  # for wandb
+    "run_name": "V2_Qwen2.5_7B_Instruct_12fixed_exp{exp_id}",  # for wandb
     "log_interval": 10,  # steps
     "save_dir": Path(paths.checkpoint_dir, 'MultiviewLLM', 'Instruction', 'V2'),
-    "model_save_name": "projector_g{graph_query_num}_t{ts_query_num}_match_12mo_fixed",
+    "model_save_name": "projector_g{graph_query_num}_t{ts_query_num}_match_12mo_fixed_exp{exp_id}",
 
     # Data settings
     "dataset_path_dict": {'profile': paths.act_info,
@@ -48,7 +49,7 @@ train_config = {
                           'index': Path(paths.processed_data_dir, 'sample_index', 'samples_min12mo_fixed_2test.feather'),
                           'graph': Path(paths.processed_data_dir, 'MultiviewLLM', 'GraphEncoder', 'samples_min12mo_fixed_2test_graph.pt'),
                           'ts': Path(paths.processed_data_dir, 'MultiviewLLM', 'TSEncoder', 'samples_min12mo_fixed_2test_billingcycle.jsonl'),},
-    "keep_views": ['TS'],  # 'Graph', 'TS'
+    "keep_views": [],  # 'Graph', 'TS'
     'txn_amt_mean': 5.489291191101074,
     'txn_amt_std': 1.5969253778457642,
     "padding_length": 1000,  # max length for padding/truncating input sequences
@@ -60,7 +61,7 @@ train_config = {
     "backbone": "Qwen/Qwen2.5-7B-Instruct",
     "backbone_cache_dir": "/data/huggingface-cache/hub",
     "graph_query_num": 5,
-    "ts_query_num": 2,
+    "ts_query_num": 1,
     "placeholder_num": 25,  # number of placeholder tokens to add to the tokenizer and model embeddings
     "llm_hidden_size": 1280,  # will be updated after loading the model
     ## Graph

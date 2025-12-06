@@ -49,7 +49,7 @@ def main(config):
         project_name=config['project'],
         config=config,
         init_kwargs={"wandb":
-                         {"name": config['run_name'],
+                         {"name": config['run_name'].format(exp_id=config['exp_id']),
                           "config": config,
                           }
                      }
@@ -106,10 +106,14 @@ def main(config):
             if accelerator.is_main_process and pbar is not None:
                 pbar.update(1)
 
-        save_name = config['model_save_name'].format(graph_query_num=config['graph_query_num'], ts_query_num=config['ts_query_num'])+f"_epoch{epoch+1}_step{global_step}"
+        save_name = config['model_save_name'].format(graph_query_num=config['graph_query_num'],
+                                                     ts_query_num=config['ts_query_num'],
+                                                     exp_id=config['exp_id'])+f"_epoch{epoch+1}_step{global_step}"
         save_model(accelerator, model, config['save_dir'], save_name)
 
-    save_name = config['model_save_name'].format(graph_query_num=config['graph_query_num'], ts_query_num=config['ts_query_num'])+f"_final_step{global_step}"
+    save_name = config['model_save_name'].format(graph_query_num=config['graph_query_num'],
+                                                 ts_query_num=config['ts_query_num'],
+                                                 exp_id=config['exp_id'])+f"_final_step{global_step}"
     save_model(accelerator, model, config['save_dir'], save_name)
 
     accelerator.end_training()
