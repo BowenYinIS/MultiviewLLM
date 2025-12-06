@@ -48,10 +48,11 @@ class MultiviewLLM(torch.nn.Module):
         transaction_num_lis = data['transaction_number_lis']
 
         # graph_embeddings
-        z, g = self.graph_model.forward_without_augment(graph_data.x, graph_data.edge_index, graph_data.edge_attr, graph_data.batch)
-        graph_sizes = torch.bincount(graph_data.batch)
-        z_pre_graph = list(torch.split(z, graph_sizes.tolist(), dim=0))
-        z_padding, z_mask = self.pad_and_mask(z_pre_graph)
+        # z, g = self.graph_model.forward_without_augment(graph_data.x, graph_data.edge_index, graph_data.edge_attr, graph_data.batch)
+        # graph_sizes = torch.bincount(graph_data.batch)
+        # z_pre_graph = list(torch.split(z, graph_sizes.tolist(), dim=0))
+        # z_padding, z_mask = self.pad_and_mask(z_pre_graph)
+        z_padding, z_mask = None, None
 
         # ts_embeddings
         ts = self.ts_model(ts_data)

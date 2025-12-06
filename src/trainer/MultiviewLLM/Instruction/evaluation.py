@@ -93,6 +93,17 @@ def get_original_index(df_pc):
     return df_pc
 
 
+def jiexi(text):
+    '''Extract predicted label from generated text.'''
+    text = text.lower()
+    if 'false' in text:
+        return 0.0
+    elif 'true' in text:
+        return 1.0
+    else:
+        return None
+
+
 def logit_jiexi(logit_data):
     '''Extract predicted label from logit data.'''
     y_true = []
@@ -127,6 +138,39 @@ if __name__ == '__main__':
     promptcast_metrics['Model'] = 'PromptCast'
     valid_origins = df_promptcast['original_tag'].tolist()
 
+    # my transformer结果
+    df_mt = pd.read_feather(r'/home/bwyin/project/Agent/MultiviewLLM/src/temp/my_transformer_promptcast.feather')
+    df_mt = get_original_index(df_mt)
+    df_mt['pred_is_delinquent'] = df_mt['model_output'].apply(jiexi)
+    df_mt = df_mt[df_mt['pred_is_delinquent'].notnull()]
+    df_mt = df_mt[df_mt['original_tag'].isin(valid_origins)]
+    y_true, y_prob = df_mt['target_delinquency'], df_mt['pred_is_delinquent']
+    metrics, meta_info = evaluate_credit_scoring_metrics(y_true, y_prob, pos_rate, 0.5, bg_pg, severity_ratio)
+    mt_metrics = metrics
+    mt_metrics['Model'] = 'My Transformer'
+
+    # my transformer结果
+    df_mt = pd.read_feather(r'/home/bwyin/project/Agent/MultiviewLLM/src/temp/my_transformer_promptcast_sp.feather')
+    df_mt = get_original_index(df_mt)
+    df_mt['pred_is_delinquent'] = df_mt['model_output'].apply(jiexi)
+    df_mt = df_mt[df_mt['pred_is_delinquent'].notnull()]
+    df_mt = df_mt[df_mt['original_tag'].isin(valid_origins)]
+    y_true, y_prob = df_mt['target_delinquency'], df_mt['pred_is_delinquent']
+    metrics, meta_info = evaluate_credit_scoring_metrics(y_true, y_prob, pos_rate, 0.5, bg_pg, severity_ratio)
+    mt_metrics_sp = metrics
+    mt_metrics_sp['Model'] = 'SP My Transformer'
+
+    # my transformer结果
+    df_mt = pd.read_feather(r'/home/bwyin/project/Agent/MultiviewLLM/src/temp/my_transformer_promptcast_em.feather')
+    df_mt = get_original_index(df_mt)
+    df_mt['pred_is_delinquent'] = df_mt['model_output'].apply(jiexi)
+    df_mt = df_mt[df_mt['pred_is_delinquent'].notnull()]
+    df_mt = df_mt[df_mt['original_tag'].isin(valid_origins)]
+    y_true, y_prob = df_mt['target_delinquency'], df_mt['pred_is_delinquent']
+    metrics, meta_info = evaluate_credit_scoring_metrics(y_true, y_prob, pos_rate, 0.5, bg_pg, severity_ratio)
+    mt_metrics_em = metrics
+    mt_metrics_em['Model'] = 'EM My Transformer'
+
     # xgbost结果
     df_xgboost = pd.read_csv(r'/home/bwyin/project/Agent/MultiviewLLM/src/temp/predictions_xgboost_latest.csv')
     df_xgboost['original_tag'] = df_xgboost.index
@@ -150,11 +194,11 @@ if __name__ == '__main__':
     # 读取 Logit 数据
     with open(r'/data/bwyin/project/MultiviewLLM/evaluation_results/projector_g5_t1_match_12mo_fixed_exp2_final_step1076_logit.json', 'r') as f:
         logit_data = json.load(f)
-    # logit_data = [item for item in logit_data if item['original_tag'] in valid_origins]
-    y_true, y_prob = calculate_confidence(logit_data, T)
-    metrics, meta_info = evaluate_credit_scoring_metrics(y_true, y_prob, pos_rate, None, bg_pg, severity_ratio)
-    # y_true, y_prob = logit_jiexi(logit_data)
-    # metrics, meta_info = evaluate_credit_scoring_metrics(y_true, y_prob, pos_rate, 0.5, bg_pg, severity_ratio)  # 记得有时候去掉阈值
+    logit_data = [item for item in logit_data if item['original_tag'] in valid_origins]
+    # y_true, y_prob = calculate_confidence(logit_data, T)
+    # metrics, meta_info = evaluate_credit_scoring_metrics(y_true, y_prob, pos_rate, None, bg_pg, severity_ratio)
+    y_true, y_prob = logit_jiexi(logit_data)
+    metrics, meta_info = evaluate_credit_scoring_metrics(y_true, y_prob, pos_rate, 0.5, bg_pg, severity_ratio)  # 记得有时候去掉阈值
     metrics['Model'] = 'MVLLM Logit-based'
 
     # 汇总结果
@@ -162,7 +206,10 @@ if __name__ == '__main__':
         promptcast_metrics,
         xgboost_metrics,
         logistic_metrics,
-        metrics
+        metrics,
+        mt_metrics,
+        mt_metrics_sp,
+        mt_metrics_em
     ])
     df = df.round(4)
     print(df)

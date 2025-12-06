@@ -174,9 +174,10 @@ class InstructionDataset(Dataset):
             full_messages = input_prompt + test_suffix
             full_ids = self.tokenizer(full_messages,
                                       return_tensors='pt',
-                                      padding='max_length',
-                                      max_length=self.config['padding_length'],
-                                      truncation=True)['input_ids']
+                                      )['input_ids']
+                                      # padding='max_length',
+                                      # max_length=self.config['padding_length'],
+                                      # truncation=True)['input_ids']
 
         labels = full_ids.clone()
         labels[0, :len(input_ids)] = -100  # Mask instruction part in labels
