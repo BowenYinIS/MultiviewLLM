@@ -28,7 +28,7 @@ class TransactionEmbedding(nn.Module):
 class PerFeatureEmbedding(nn.Module):
     """Project per-feature one-hot (or scalar) inputs to d_model and sum them."""
     def __init__(self, d_model=256,
-                 mcc_classes=13, hod_classes=24, dow_classes=7, wom_classes=6, moy_classes=12):
+                 mcc_classes=13, hod_classes=24, dow_classes=7, wom_classes=6, moy_classes=12, billing_cycle_classes=12):
         super().__init__()
         self.d_model = d_model
         # Linear layers for categorical one-hot inputs
@@ -37,10 +37,11 @@ class PerFeatureEmbedding(nn.Module):
         self.embed_dow = nn.Linear(dow_classes, d_model)
         self.embed_wom = nn.Linear(wom_classes, d_model)
         self.embed_moy = nn.Linear(moy_classes, d_model)
+        self.embed_billing_cycle = nn.Linear(billing_cycle_classes, d_model)
         # Linear for amount scalar
         self.embed_amt = nn.Linear(1, d_model)
 
-    def forward(self, mcc_onehot, hod_onehot, dow_onehot, wom_onehot, moy_onehot, amt_scalar):
+    def forward(self, mcc_onehot, hod_onehot, dow_onehot, wom_onehot, moy_onehot, billing_cycle_onehot, amt_scalar):
         # Inputs shapes: [seq_len, C] for onehots, amt_scalar: [seq_len, 1]
         # Project each to [seq_len, d_model]
         mch = self.embed_mcc(mcc_onehot)
@@ -48,10 +49,11 @@ class PerFeatureEmbedding(nn.Module):
         d = self.embed_dow(dow_onehot)
         w = self.embed_wom(wom_onehot)
         mo = self.embed_moy(moy_onehot)
+        bc = self.embed_billing_cycle(billing_cycle_onehot)
         a = self.embed_amt(amt_scalar)
 
         # Sum embeddings
-        emb = mch + h + d + w + mo + a
+        emb = mch + h + d + w + mo + bc + a
         return emb
 
 class PositionalEncoding(nn.Module):
@@ -85,7 +87,8 @@ class TimeSeriesTransformer(nn.Module):
                  num_hod=24,
                  num_dow=7,
                  num_wom=6,
-                 num_moy=12):
+                 num_moy=12,
+                 billing_cycle_ids=12):
         super().__init__()
         
         self.d_model = d_model
@@ -95,6 +98,7 @@ class TimeSeriesTransformer(nn.Module):
         self.num_dow = num_dow
         self.num_wom = num_wom
         self.num_moy = num_moy
+        self.billing_cycle_ids = billing_cycle_ids
 
         # Use per-feature one-hot projection + sum into d_model
         # For MCC we use 13 coarse classes (mcc_to_class), other categories use provided sizes
@@ -104,7 +108,8 @@ class TimeSeriesTransformer(nn.Module):
             hod_classes=self.num_hod,
             dow_classes=self.num_dow,
             wom_classes=self.num_wom,
-            moy_classes=self.num_moy
+            moy_classes=self.num_moy,
+            billing_cycle_classes=self.billing_cycle_ids
         )
         self.pos_encoding = PositionalEncoding(d_model, max_len)
         
@@ -178,10 +183,18 @@ class TimeSeriesTransformer(nn.Module):
             moy_idx = batch_data['moy'][i].long().clamp(min=0, max=self.num_moy - 1).to(device)
             moy_onehot = F.one_hot(moy_idx, num_classes=self.num_moy).float()
 
+            # billing_cycle_id (0-11)
+            if 'billing_cycle_id' in batch_data:
+                billing_cycle_idx = batch_data['billing_cycle_id'][i].long().clamp(min=0, max=11).to(device)
+                billing_cycle_onehot = F.one_hot(billing_cycle_idx, num_classes=12).float()
+            else:
+                # Fallback: all zeros if not provided
+                billing_cycle_onehot = torch.zeros(seq_len, 12, dtype=torch.float, device=device)
+
             amt_col = batch_data['txn_amt'][i].unsqueeze(1).float().to(device)
 
             # Project per-feature one-hots and amount and sum
-            embeddings = self.transaction_embedding(mcc_onehot, hod_onehot, dow_onehot, wom_onehot, moy_onehot, amt_col)
+            embeddings = self.transaction_embedding(mcc_onehot, hod_onehot, dow_onehot, wom_onehot, moy_onehot, billing_cycle_onehot, amt_col)
             batch_embeddings.append(embeddings)
         
         # Pad sequences to same length
@@ -322,7 +335,7 @@ def mcc_to_class(mcc_code):
         return 12  # Default to last class for unknown codes
 
 def create_model(d_model=256, nhead=8, num_layers=6, device='cuda',
-                 num_mcc=13, num_hod=24, num_dow=7, num_wom=6, num_moy=12):
+                 num_mcc=13, num_hod=24, num_dow=7, num_wom=6, num_moy=12, billing_cycle_classes=12):
     """Create the time series transformer model"""
     model = TimeSeriesTransformer(
         input_dim=6,

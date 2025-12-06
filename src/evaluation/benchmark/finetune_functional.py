@@ -158,8 +158,8 @@ def build_dataset(
         samples = samples[:max_prompts]
 
     # Load the prompt template
-    sys_msg_template = templates.get_naivellm_sys_msg(is_cot_prompt)
-    user_msg_template = templates.get_naivellm_user_msg(has_protected_attributes)
+    sys_msg_template = templates.get_promptcast_sys_msg(is_cot_prompt)
+    user_msg_template = templates.get_promptcast_user_msg(has_protected_attributes)
 
     # Build the prompts
     prompts = []

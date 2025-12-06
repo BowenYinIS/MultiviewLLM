@@ -31,9 +31,7 @@ class LlmDataset:
         self.transaction = pl.read_ipc(paths.sample_transaction, memory_map=False)
 
         # get the valid act_idn_sky
-        self.valid_act_idn_sky = set(self.profile["act_idn_sky"]) & set(
-            self.transaction["act_idn_sky"]
-        )
+        self.valid_act_idn_sky = set(self.profile["act_idn_sky"]) & set(self.transaction["act_idn_sky"])
         print("N valid act_idn_sky:", len(self.valid_act_idn_sky))
 
         # ensure profile and transaction have the same act_idn_sky
@@ -63,14 +61,11 @@ class LlmDataset:
         self.add_transaction_summary()
 
         print(f"Dataset built: {len(self.samples)} samples")
-        print(
-            f"\tTrain: {(self.samples['split'] == 'train').sum()}, Test: {(self.samples['split'] == 'test').sum()}"
-        )
+        print(f"\tTrain: {(self.samples['split'] == 'train').sum()}, Test: {(self.samples['split'] == 'test').sum()}")
 
         # save the dataset
         save_path = (
-            paths.processed_data_dir
-            / f"llm_benchmark/{self.sample_index_name.replace('index', 'samples')}.feather"
+            paths.processed_data_dir / f"llm_benchmark/{self.sample_index_name.replace('index', 'samples')}.feather"
         )
         self.samples.write_ipc(save_path, compression="lz4")
         print(f"Dataset saved to {save_path.name}")
@@ -95,9 +90,7 @@ class LlmDataset:
         transaction_dict = (
             self.transaction
             # key: (act_idn_sky, billing_date), value: pl.DataFrame
-            .partition_by(
-                "act_idn_sky", "billing_date", maintain_order=True, as_dict=True, include_key=False
-            )
+            .partition_by("act_idn_sky", "billing_date", maintain_order=True, as_dict=True, include_key=False)
         )
 
         # for each (act_idn_sky, billing_date) pair, we construct an unit of observation
@@ -109,8 +102,8 @@ class LlmDataset:
             # delinquency label of the cycle
             is_delinquent = transaction_cycle["bank_delinquency_label"].last()
 
-            # balance of the cycle
-            balance_cycle = transaction_cycle["balance"].round().cast(pl.Int32).last()
+            # total spending amount
+            total_amt_cycle = transaction_cycle.select(c.txn_amt.sum().round()).item()
 
             # transaction text of the cycle
             transaction_text = "\n".join(
@@ -126,19 +119,34 @@ class LlmDataset:
                 )["prompt"].to_list()
             )
 
-            # add meta data to transaction text
-            transaction_text = (
+            # add meta data to transaction text (including number of transactions)
+            transaction_text_promptcast_detail_1 = (
                 f"在{billing_date.year}年{billing_date.month}月的账单周期，"
-                f"应付账单金额为{balance_cycle}元，"
                 f"该账单周期是否违约：{'是' if is_delinquent else '否'}，"
                 f"具体消费如下：\n{transaction_text}"
+            )
+            transaction_text_promptcast_summary_1 = (
+                f"在{billing_date.year}年{billing_date.month}月的账单周期，"
+                f"总支出金额为{total_amt_cycle}元，共发生{transaction_cycle.height}笔交易，"
+            )
+            transaction_text_finpt_detail_1 = (
+                f"在{billing_date.year}年{billing_date.month}月的账单周期，"
+                f"该账单周期是否违约：{'是' if is_delinquent else '否'}，"
+                f"具体消费如下：\n{transaction_text}"
+            )
+            transaction_text_finpt_summary_1 = (
+                f"在{billing_date.year}年{billing_date.month}月的账单周期，"
+                f"总支出金额为{total_amt_cycle}元，共发生{transaction_cycle.height}笔交易，"
             )
 
             # add the current cycle to the unit list
             cycle_units[(act_idn_sky, billing_date)] = {
                 "is_delinquent": is_delinquent,
-                "balance_cycle": balance_cycle,
-                "transaction_text": transaction_text,
+                "total_amt_cycle": total_amt_cycle,
+                "transaction_text_promptcast_detail_1": transaction_text_promptcast_detail_1,
+                "transaction_text_promptcast_summary_1": transaction_text_promptcast_summary_1,
+                "transaction_text_finpt_detail_1": transaction_text_finpt_detail_1,
+                "transaction_text_finpt_summary_1": transaction_text_finpt_summary_1,
             }
 
         # save as class attribute
@@ -164,6 +172,14 @@ class LlmDataset:
                 - target_delinquency (bool): Delinquency label for the last cycle in the window
         """
 
+        # get the baseline delinquency rate from the train split
+        baseline_delinquency_rate = (
+            self.sample_index.filter(c.split == "train")
+            .select((c.target_delinquency.mean() * 100).round(2))["target_delinquency"]
+            .item()
+        )
+        print(f"Baseline delinquency rate: {baseline_delinquency_rate}%")
+
         # initialize the results
         samples = []
 
@@ -179,26 +195,78 @@ class LlmDataset:
             # get the profile data for this account
             profile_act = self.profile.filter(c.act_idn_sky == act_idn_sky).to_dicts()[0]
 
+            # calculate the cummulative delinquency number
+            cumulative_delin_times = sum(row["delinquency_history"])
+
             # add profile to the sample
             sample = row | {
                 **profile_act,
-                "transaction_text": "",
+                "cumulative_delin_times": cumulative_delin_times,
+                "transaction_text_promptcast_detail_1": "",
+                "transaction_text_promptcast_summary_1": "",
+                "transaction_text_finpt_detail_1": "",
+                "transaction_text_finpt_summary_1": "",
             }
 
             # add transaction text to the sample
             for idx, billing_date in enumerate(billing_dates):
                 # get transaction text of the current cycle
-                transaction_text = self.cycle_units[(act_idn_sky, billing_date)]["transaction_text"]
+                transaction_text_promptcast_detail_1 = self.cycle_units[(act_idn_sky, billing_date)][
+                    "transaction_text_promptcast_detail_1"
+                ]
+                transaction_text_promptcast_summary_1 = self.cycle_units[(act_idn_sky, billing_date)][
+                    "transaction_text_promptcast_summary_1"
+                ]
+
+                transaction_text_finpt_detail_1 = self.cycle_units[(act_idn_sky, billing_date)][
+                    "transaction_text_finpt_detail_1"
+                ]
+                transaction_text_finpt_summary_1 = self.cycle_units[(act_idn_sky, billing_date)][
+                    "transaction_text_finpt_summary_1"
+                ]
+
+                # if this is the first cycle,
+                # - ("summary" type only) add cumulative delinquency times before any transaction text
+                if idx == 0:
+                    transaction_text_promptcast_summary_1 = (
+                        f"该用户在过去{len(billing_dates)}个账单周期中，共发生{cumulative_delin_times}次违约。\n\n"
+                        + transaction_text_promptcast_summary_1
+                    )
+                    transaction_text_finpt_summary_1 = (
+                        f"该用户在过去{len(billing_dates)}个账单周期中，共发生{cumulative_delin_times}次违约。\n\n"
+                        + transaction_text_finpt_summary_1
+                    )
 
                 # if this is the last cycle
+                # - add the latest cycle indicator to the transaction text
                 # - remove delinquency lable from the transaction text
                 if idx == len(billing_dates) - 1:
-                    transaction_text = re.sub(
-                        r"该账单周期是否违约.*?，(?=具体消费如下)", "", transaction_text
+                    transaction_text_promptcast_detail_1 = f"（最新一个账单周期）{transaction_text_promptcast_detail_1}"
+                    transaction_text_promptcast_summary_1 = (
+                        f"（最新一个账单周期）{transaction_text_promptcast_summary_1}"
+                    )
+                    transaction_text_finpt_detail_1 = f"（最新一个账单周期）{transaction_text_finpt_detail_1}"
+                    transaction_text_finpt_summary_1 = f"（最新一个账单周期）{transaction_text_finpt_summary_1}"
+
+                    # remove the delinquency label from the transaction text
+                    transaction_text_promptcast_detail_1 = re.sub(
+                        r"该账单周期是否违约.*?，(?=具体消费如下)", "", transaction_text_promptcast_detail_1
+                    )
+                    transaction_text_finpt_detail_1 = re.sub(
+                        r"该账单周期是否违约.*?，(?=具体消费如下)", "", transaction_text_finpt_detail_1
                     )
 
                 # add transaction text
-                sample["transaction_text"] += transaction_text + "\n\n"
+                sample["transaction_text_promptcast_detail_1"] += transaction_text_promptcast_detail_1 + "\n\n"
+                sample["transaction_text_promptcast_summary_1"] += transaction_text_promptcast_summary_1 + "\n\n"
+                sample["transaction_text_finpt_detail_1"] += transaction_text_finpt_detail_1 + "\n\n"
+                sample["transaction_text_finpt_summary_1"] += transaction_text_finpt_summary_1 + "\n\n"
+
+            """
+            # add baseline delinquency rate
+            sample["transaction_text_detail_3"] += f"所有用户平均逾期率(delinquency rate)为{baseline_delinquency_rate}%\n\n" + sample["transaction_text_detail_2"]
+            sample["transaction_text_summary_3"] += f"所有用户平均逾期率(delinquency rate)为{baseline_delinquency_rate}%\n\n" + sample["transaction_text_summary_2"]
+            """
 
             # add the sample to the results
             samples.append(sample)
@@ -209,12 +277,12 @@ class LlmDataset:
     def add_transaction_summary(self):
         """
         Add cycle-level transaction summary (from Bowen) to the sample
+        including:笔数、金额、类目占比、时间分布, etc.
         """
+
         # check if transaction summary file exists
         summary_path = "_".join(self.sample_index_name.split("_")[1:])
-        summary_path = (
-            paths.processed_data_dir / f"llm_benchmark/txn_summary_{summary_path}.json"
-        )
+        summary_path = paths.processed_data_dir / f"llm_benchmark/txn_summary_{summary_path}.json"
 
         # if the summary file does not exist, skip
         if not summary_path.exists():
@@ -228,18 +296,18 @@ class LlmDataset:
         self.samples = (
             self.samples
             # add the transaction summary
-            .with_columns(transaction_summary=pl.Series(summaries))
+            .with_columns(transaction_text_summary_0=pl.Series(summaries))
         )
 
 
 if __name__ == "__main__":
     configs = [
-        {"sample_index_name": "index_min6mo_allprevious_2test"},
-        {"sample_index_name": "index_min6mo_fixed_2test"},
-        {"sample_index_name": "index_min12mo_allprevious_2test"},
         {"sample_index_name": "index_min12mo_fixed_2test"},
+        {"sample_index_name": "index_min12mo_allprevious_2test"},
         {"sample_index_name": "index_min12mo_allprevious_1test"},
         {"sample_index_name": "index_min12mo_fixed_1test"},
+        {"sample_index_name": "index_min6mo_allprevious_2test"},
+        {"sample_index_name": "index_min6mo_fixed_2test"},
     ]
 
     # build and save the dataset

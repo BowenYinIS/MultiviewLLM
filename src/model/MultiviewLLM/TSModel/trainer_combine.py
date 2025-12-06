@@ -60,7 +60,7 @@ class CombinedTrainer:
     def _move_batch_to_device(self, batch):
         batch_on_device = {}
         for key, value in batch.items():
-            if key in ['mcc_cde', 'hod', 'dow', 'wom', 'moy', 'txn_amt', 'target']:
+            if key in ['mcc_cde', 'hod', 'dow', 'wom', 'moy', 'txn_amt', 'target', 'billing_cycle_id', 'year']:
                 if key == 'target':
                     batch_on_device[key] = value.to(self.device)
                 else:
@@ -184,12 +184,13 @@ class CombinedTrainer:
                         except Exception:
                             pass
 
-                # Fallback: use month and hour if no full datetime available
+                # Fallback: construct datetime from year, month, hour if no full datetime available
                 if time_val is None:
                     try:
+                        year = batch_on_device['year'][i][pos].item() if 'year' in batch_on_device else 2012
                         moy = batch_on_device['moy'][i][pos].item()
                         hod = batch_on_device['hod'][i][pos].item()
-                        time_val = f"{int(moy):02d}月{int(hod):02d}时"
+                        time_val = f"{int(year):04d}-{int(moy):02d}-01 {int(hod):02d}:00:00"
                     except Exception:
                         time_val = '未知时间'
 
@@ -239,6 +240,14 @@ class CombinedTrainer:
 
                 if not des_val:
                     des_val = '未知交易'
+
+                # Billing cycle ID: extract from batch (0-11)
+                billing_cycle_id = '未知账单周期'
+                if 'billing_cycle_id' in batch_on_device:
+                    try:
+                        billing_cycle_id = str(int(batch_on_device['billing_cycle_id'][i][pos].item()))
+                    except Exception:
+                        pass
 
                 # Amount: reconstruct original amount if possible
                 try:
@@ -420,7 +429,7 @@ class CombinedTrainer:
 def main():
     parser = argparse.ArgumentParser(description='Combined training: prediction + token-level contrastive')
     parser.add_argument('--train_file', type=str,
-                        default='data/processed_data/ts_processed_data/samples_min12mo_fixed_2test.jsonl')
+                        default='data/processed_data/ts_processed_data/samples_min12mo_fixed_2test_billingcycle.jsonl')
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--epochs', type=int, default=10)
     parser.add_argument('--device', type=str, default='cuda:0')
@@ -471,12 +480,14 @@ def main():
     
     # MCC is converted to 13 coarse classes in _move_batch_to_device, so num_mcc is fixed at 13
     # Other categorical features use their natural ranges
+    # billing_cycle_id has 12 unique values (0-11)
     num_mcc = 13
     num_hod = 24
     num_dow = 7
     num_wom = 6
     num_moy = 12
-    ts_model = create_model(device=device, num_mcc=num_mcc, num_hod=num_hod, num_dow=num_dow, num_wom=num_wom, num_moy=num_moy)
+    billing_cycle_classes = 12
+    ts_model = create_model(device=device, num_mcc=num_mcc, num_hod=num_hod, num_dow=num_dow, num_wom=num_wom, num_moy=num_moy, billing_cycle_classes=billing_cycle_classes)
     ts_model = ts_model.to(device)
 
     # Compute amount normalization stats from training data (used to invert normalization in prompts)
@@ -521,6 +532,19 @@ def main():
         # Save embeddings (npy) after each epoch following contrastive trainer's save logic
         npy_out = os.path.join(args.output_dir, f'samples_epoch_{epoch+1}.npy')
         trainer.save_embeddings_npy(dataloader, npy_out)
+
+        # Save model checkpoint each epoch
+        ckpt_dir = os.path.join(args.output_dir, 'modelckpt')
+        os.makedirs(ckpt_dir, exist_ok=True)
+        ckpt_path = os.path.join(ckpt_dir, f'epoch_{epoch+1}.pt')
+        torch.save({
+            'epoch': epoch + 1,
+            'model_state_dict': trainer.ts_model.state_dict(),
+            'ts_projection_state_dict': trainer.ts_projection.state_dict(),
+            'optimizer_state_dict': trainer.optimizer.state_dict(),
+            'losses': losses,
+        }, ckpt_path)
+        print(f"Saved checkpoint to {ckpt_path}")
         # Free cached GPU memory to avoid allocator growth across epochs
         try:
             import gc
