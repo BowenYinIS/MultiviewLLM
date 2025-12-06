@@ -151,13 +151,13 @@ if __name__ == '__main__':
         graph_query_num = int(checkpoint_path.stem.split('_g')[1].split('_')[0])
         ts_query_num = int(checkpoint_path.stem.split('_t')[1].split('_')[0])
         config['n_samples'] = 1
-        config['batch_size'] = 128
+        config['batch_size'] = 1
         config['graph_query_num'] = graph_query_num
         config['ts_query_num'] = ts_query_num
 
         # tokenizer
         tokenizer = create_tokenizer(config)
-        tokenizer.padding_side = 'left'
+        # tokenizer.padding_side = 'left'
 
         # dataloader
         train_loader, test_loader = create_dataloader(config, tokenizer)
