@@ -350,10 +350,12 @@ class CombinedTrainer:
             # We use token embeddings from the (masked) forward; positives are themselves
             token_embeddings = predictions['token_embeddings']
             attention_mask = predictions['attention_mask']
-            contra_loss = self.compute_token_contrastive_loss(token_embeddings, attention_mask, batch_on_device)
 
-            total_loss = pred_losses['total_pred_loss'] + self.contrastive_weight * contra_loss
-
+            # TODO: 1215 without contrastive loss 
+            # contra_loss = self.compute_token_contrastive_loss(token_embeddings, attention_mask, batch_on_device)
+            contra_loss = torch.tensor(0.0, device=self.device)
+            # total_loss = pred_losses['total_pred_loss'] + self.contrastive_weight * contra_loss
+            total_loss = pred_losses['total_pred_loss']
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(self.ts_model.parameters(), max_norm=1.0)
             torch.nn.utils.clip_grad_norm_(self.ts_projection.parameters(), max_norm=1.0)
@@ -432,13 +434,13 @@ def main():
                         default='data/processed_data/ts_processed_data/samples_min12mo_fixed_2test_billingcycle.jsonl')
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--epochs', type=int, default=10)
-    parser.add_argument('--device', type=str, default='cuda:0')
+    parser.add_argument('--device', type=str, default='cuda:1')
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--temperature', type=float, default=0.07)
     parser.add_argument('--contrastive_weight', type=float, default=1.0)
-    parser.add_argument('--output_dir', type=str, default='checkpoint/MultiviewLLM/TSModel/combined')
-    parser.add_argument('--plot_dir', type=str, default='Fig/TScombined')
-    parser.add_argument('--npy_path', type=str, default='checkpoint/MultiviewLLM/TSModel/samples_combined.npy')
+    parser.add_argument('--output_dir', type=str, default='checkpoint/MultiviewLLM/TSModel/only_te')
+    parser.add_argument('--plot_dir', type=str, default='Fig/TSonlyte')
+    parser.add_argument('--npy_path', type=str, default='checkpoint/MultiviewLLM/TSModel/samples_onlyte.npy')
     parser.add_argument('--bert_model', type=str, default='bert-base-chinese')
     parser.add_argument('--limit_samples', type=int, default=-1,
                         help='Randomly sample this many sequences for fast training (-1 for all)')

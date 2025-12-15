@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import math
 import random
-from src.model.MultiviewLLM.TSModel.dataloader import create_dataloader
+from dataloader import create_dataloader
 import argparse
 
 class TransactionEmbedding(nn.Module):
